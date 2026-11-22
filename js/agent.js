@@ -188,7 +188,7 @@ Current date and time: ${new Date().toString()}.
 - When the user mentions "this page", "this article", "this tab", "here" or similar, call read_tab to read their current tab. read_tab and read_url can read pages behind the user's logins.${
     acting
       ? `
-- Tabs you open go into your "Agent" tab group. Work in your own tabs; only act on the user's other tabs when the task is about them. Open tabs in the background unless the user wants to see them.
+- Tabs you open go into your "RolConnect" tab group. Work in your own tabs; only act on the user's other tabs when the task is about them. Open tabs in the background unless the user wants to see them.
 - To act on a page: call get_page_elements, act with click_element / type_text / press_key, then call get_page_elements again after anything that changes the page. Prefer direct URLs (search results, filtered listings) over long click paths. Use wait when a page is still loading.
 - The user can pause you and take over any tab. When you continue after a pause, look at the page again first, because it may have changed.
 - If you hit a login wall, CAPTCHA, payment step or missing information, stop and tell the user exactly what you need.`

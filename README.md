@@ -30,7 +30,7 @@ Third-party apps can't use Claude.ai or ChatGPT *subscriptions*, so Claude and C
 | `web_search` | Search the web (native for Claude/OpenAI, else DuckDuckGo/Bing) |
 | `read_url` | Fetch a page and extract readable text (falls back to a background tab for JS-heavy sites) |
 | `list_tabs`, `read_tab` | See open tabs and read any of them, including pages you're logged into |
-| `open_tab`, `navigate_tab`, `scroll_page`, `close_tab` | Drive tabs. Tabs the agent opens go into an **Agent** tab group |
+| `open_tab`, `navigate_tab`, `scroll_page`, `close_tab` | Drive tabs. Tabs the agent opens go into a **RolConnect** tab group |
 | `get_page_elements`, `click_element`, `type_text`, `press_key`, `wait` | Interact with pages. Password and card fields are refused |
 | `request_approval` | Ask you before doing something important |
 | `search_history` | Search your browsing history (only when turned on) |

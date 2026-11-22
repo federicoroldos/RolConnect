@@ -10,7 +10,7 @@ const EXT_ORIGIN = chrome.runtime.getURL('');
 const uid = (p = '') => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
 // Tabs the agent opens live in their own tab group, which the user can take over at any time.
-export const AGENT_GROUP = 'Agent';
+export const AGENT_GROUP = 'RolConnect';
 export async function addToAgentGroup(tabId, ctx) {
   ctx?.run?.agentTabs?.add(tabId);
   if (!chrome.tabs.group || !chrome.tabGroups) return;
@@ -510,7 +510,7 @@ export const TOOLS = [
     name: 'open_tab',
     kind: 'tab',
     browserControl: true,
-    description: 'Open a URL in a new tab in your "Agent" tab group and wait for it to load. Returns the new tab id. Opens in the background unless active=true.',
+    description: 'Open a URL in a new tab in your "RolConnect" tab group and wait for it to load. Returns the new tab id. Opens in the background unless active=true.',
     parameters: obj({ url: str('Absolute http(s) URL.'), active: { type: 'boolean', description: 'Switch to the tab (default false).' } }, ['url']),
     label: (a) => `Opening ${host(a.url)}`,
     async run({ url, active }, ctx) {
