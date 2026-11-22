@@ -113,7 +113,6 @@ a { color: var(--accent); }
 .sb-foot { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--border); padding-top: 8px; }
 .sb-link { display: flex; align-items: center; gap: 10px; border: 0; background: none; padding: 8px 10px; border-radius: 8px; color: var(--text-2); text-align: left; }
 .sb-link:hover { background: var(--panel-2); color: var(--text); }
-.app.side #openPanel { display: none; }
 
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
@@ -332,6 +331,12 @@ a { color: var(--accent); }
 .btn.small { padding: 6px 10px; font-size: 13px; white-space: nowrap; }
 .btn.danger { color: var(--bad); }
 .btn.signin { margin: 4px 0 14px; }
+.oauth-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; margin: 4px 0 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); }
+.oauth-main { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.oauth-account { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: 13.5px; font-weight: 550; color: var(--good); }
+.oauth-account span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oauth-box .status { font-size: 12.5px; }
+.oauth-sep { margin: 14px 0 8px; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); }
 
 /* ---------- settings modal ---------- */
 .modal { position: fixed; inset: 0; background: rgba(10, 10, 8, 0.38); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 16px; z-index: 100; backdrop-filter: blur(2px); }

@@ -7,6 +7,7 @@ export const PROVIDERS = {
     keyUrl: 'https://platform.claude.com/settings/keys',
     keyHint: 'sk-ant-…',
     defaultModel: 'claude-opus-5-5',
+    oauth: true,
     color: '#d97757',
   },
   openai: {
@@ -15,6 +16,7 @@ export const PROVIDERS = {
     keyUrl: 'https://platform.openai.com/api-keys',
     keyHint: 'sk-…',
     defaultModel: 'gpt-5.5',
+    oauth: true,
     color: '#10a37f',
   },
   opencode: {
@@ -38,8 +40,8 @@ export const PROVIDERS = {
 const DEFAULTS = {
   provider: 'anthropic',
   providers: {
-    anthropic: { apiKey: '', model: PROVIDERS.anthropic.defaultModel, models: [] },
-    openai: { apiKey: '', model: PROVIDERS.openai.defaultModel, models: [] },
+    anthropic: { apiKey: '', oauth: null, model: PROVIDERS.anthropic.defaultModel, models: [] },
+    openai: { apiKey: '', oauth: null, model: PROVIDERS.openai.defaultModel, models: [] },
     opencode: { apiKey: '', model: PROVIDERS.opencode.defaultModel, models: [], apis: {} },
     opencodego: { apiKey: '', model: PROVIDERS.opencodego.defaultModel, models: [], apis: {} },
   },
@@ -78,10 +80,14 @@ export async function saveSettings(settings) {
   await chrome.storage.local.set({ settings });
 }
 
+export function hasCredentials(cfg) {
+  return !!(cfg?.apiKey || cfg?.oauth?.access);
+}
+
 export function isConfigured(settings, key = settings.provider) {
   const p = settings.providers[key];
   if (!p) return false;
-  return !!(p.apiKey && p.model);
+  return !!(hasCredentials(p) && p.model);
 }
 
 // ---- chats ----

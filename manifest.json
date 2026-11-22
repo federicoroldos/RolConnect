@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "RolConnect — AI New Tab & Browsing Agent",
   "short_name": "RolConnect",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Your new tab and side panel as an AI agent that searches the web, reads pages and uses your tabs. Claude, ChatGPT or OpenCode.",
   "homepage_url": "https://github.com/federicoroldos/RolConnect",
   "minimum_chrome_version": "116",

@@ -2,10 +2,12 @@
 // Formats: Anthropic Messages, OpenAI Responses, OpenAI-compatible Chat Completions.
 
 import { selectTools, releaseComputer } from './tools.js';
+import { ensureOAuth, CLAUDE_OAUTH_BETA } from './oauth.js';
 
 const MAX_ITERATIONS = 40;
 const ZEN = 'https://opencode.ai/inference';
 const ZEN_GO = 'https://opencode.ai/inference/go';
+const CHATGPT_CODEX = 'https://chatgpt.com/backend-api/codex';
 const isOpenCode = (key) => key === 'opencode' || key === 'opencodego';
 
 // Claude models that take the dynamic-filtering web search tool version.
@@ -31,7 +33,7 @@ export function opencodeFamily(model, apis) {
   return zenFamily(model);
 }
 
-export const EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+export const EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 const effortRank = (l) => EFFORT_LEVELS.indexOf(l);
 
 // Effort levels the selected model accepts ([] = the model has no effort control).
@@ -83,6 +85,19 @@ function resolveRoute(settings, sessionId) {
   if (!model) throw new Error('Pick a model in Settings first.');
 
   if (key === 'anthropic') {
+    if (cfg.oauth?.access) {
+      return {
+        format: 'anthropic', direct: true, oauth: 'anthropic', identity: true, model, native: settings.nativeSearch,
+        url: 'https://api.anthropic.com/v1/messages',
+        headers: {
+          authorization: `Bearer ${cfg.oauth.access}`,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+          'anthropic-beta': CLAUDE_OAUTH_BETA,
+          'x-app': 'cli',
+        },
+      };
+    }
     return {
       format: 'anthropic', direct: true, model, native: settings.nativeSearch,
       url: 'https://api.anthropic.com/v1/messages',
@@ -94,6 +109,21 @@ function resolveRoute(settings, sessionId) {
     };
   }
   if (key === 'openai') {
+    if (cfg.oauth?.access) {
+      return {
+        format: 'responses', direct: false, oauth: 'openai', codex: true, model, native: false,
+        url: `${CHATGPT_CODEX}/responses`,
+        headers: {
+          authorization: `Bearer ${cfg.oauth.access}`,
+          ...(cfg.oauth.accountId ? { 'chatgpt-account-id': cfg.oauth.accountId } : {}),
+          'OpenAI-Beta': 'responses=experimental',
+          originator: 'codex_cli_rs',
+          accept: 'text/event-stream',
+          ...(sessionId ? { session_id: sessionId, conversation_id: sessionId } : {}),
+        },
+        sse: true,
+      };
+    }
     return {
       format: 'responses', direct: true, model, native: settings.nativeSearch,
       url: 'https://api.openai.com/v1/responses',
@@ -144,20 +174,40 @@ function pruneImages(msgs, keep, note = OLD_SHOT) {
 // Sends a request whose body holds `msgs`; retries without images if the model rejects them.
 async function post(route, body, msgs, signal) {
   pruneImages(msgs, route.noVision ? 0 : MAX_IMAGES, route.noVision ? NO_VISION : OLD_SHOT);
+  const opts = { sse: route.sse, oauth: route.oauth };
   try {
-    return await postJSON(route.url, route.headers, body, signal);
+    return await postJSON(route.url, route.headers, body, signal, opts);
   } catch (e) {
     const visionError = e.status >= 400 && e.status < 500 && ![401, 403, 429].includes(e.status) && /image|vision|multi-?modal|modalit/i.test(e.message);
     if (route.noVision || !visionError || !pruneImages(msgs, Infinity)) throw e;
     route.noVision = true;
     pruneImages(msgs, 0, NO_VISION);
-    return postJSON(route.url, route.headers, body, signal);
+    return postJSON(route.url, route.headers, body, signal, opts);
   }
 }
 
 const dataUrl = (img) => `data:${img.mediaType};base64,${img.data}`;
 
-async function postJSON(url, headers, body, signal) {
+function parseSseResponse(text) {
+  let final = null;
+  let failure = '';
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    const raw = line.slice(5).trim();
+    if (!raw || raw === '[DONE]') continue;
+    let ev;
+    try { ev = JSON.parse(raw); } catch { continue; }
+    if (ev.type === 'response.completed' || ev.type === 'response.done') final = ev.response;
+    else if (ev.type === 'response.failed' || ev.type === 'error') {
+      failure = ev.response?.error?.message || ev.error?.message || ev.message || failure;
+    }
+  }
+  if (final) return final;
+  if (failure) throw new Error(failure);
+  return null;
+}
+
+async function postJSON(url, headers, body, signal, opts = {}) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, {
       method: 'POST',
@@ -168,7 +218,14 @@ async function postJSON(url, headers, body, signal) {
     const text = await res.text();
     let data = null;
     try { data = JSON.parse(text); } catch {}
-    if (res.ok) return data;
+    if (res.ok) {
+      if (opts.sse) {
+        const streamed = parseSseResponse(text);
+        if (streamed) return streamed;
+        throw new Error('The model stream ended without a final response.');
+      }
+      return data;
+    }
 
     const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
     if (retryable && attempt < 2) {
@@ -176,9 +233,9 @@ async function postJSON(url, headers, body, signal) {
       await new Promise((r) => setTimeout(r, (ra > 0 && ra < 30 ? ra : 2 ** attempt * 2) * 1000));
       continue;
     }
-    const msg = data?.error?.message || data?.message || (typeof data?.error === 'string' ? data.error : '') || text.slice(0, 400) || res.statusText;
+    const msg = data?.error?.message || data?.message || data?.detail || (typeof data?.error === 'string' ? data.error : '') || text.slice(0, 400) || res.statusText;
     const hint =
-      res.status === 401 ? ' — check your API key in Settings.' :
+      res.status === 401 ? (opts.oauth ? ` — sign in to ${opts.oauth === 'anthropic' ? 'Claude' : 'ChatGPT'} again in Settings.` : ' — check your API key in Settings.') :
       res.status === 404 ? ' — check the model name in Settings.' : '';
     const err = new Error(`${res.status}: ${msg}${hint}`);
     err.status = res.status;
@@ -313,10 +370,15 @@ async function runAnthropic({ route, settings, tools, system, history, userText,
   }
 
   const headers = { ...route.headers };
-  const base = { model: route.model, max_tokens: 16000, system, tools: toolDefs };
-  if (route.direct && CLAUDE_FALLBACKS.test(route.model)) {
+  const systemBlocks = route.identity
+    ? [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }, { type: 'text', text: system }]
+    : system;
+  const base = { model: route.model, max_tokens: 16000, system: systemBlocks, tools: toolDefs };
+  if (route.direct && !route.oauth && CLAUDE_FALLBACKS.test(route.model)) {
     // Server-side refusal fallback: reroutes declined requests to a suitable model.
-    headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
+    const betas = new Set((headers['anthropic-beta'] || '').split(',').map((b) => b.trim()).filter(Boolean));
+    betas.add('server-side-fallback-2026-07-01');
+    headers['anthropic-beta'] = [...betas].join(',');
     base.fallbacks = 'default';
   }
   if (route.effort) {
@@ -373,22 +435,31 @@ async function runAnthropic({ route, settings, tools, system, history, userText,
 // ---------------------------------------------------------------------------
 // OpenAI Responses API
 
+const stripItemIds = (items) => (items || []).map(({ id, ...rest }) => rest);
+const codexEffort = (effort) => (effort === 'minimal' || effort === 'none' ? 'low' : effort);
+
 async function runResponses({ route, settings, tools, system, history, userText, ui, ctx, signal }) {
   const toolDefs = tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters }));
   if (route.native) toolDefs.unshift({ type: 'web_search' });
 
+  const codex = !!route.codex;
   const base = { model: route.model, instructions: system, tools: toolDefs };
-  if (route.effort) base.reasoning = { effort: route.effort };
+  if (route.effort) base.reasoning = { effort: codexEffort(route.effort), ...(codex ? { summary: 'auto' } : {}) };
+  else if (codex) base.reasoning = { summary: 'auto' };
   // Direct OpenAI: chain with previous_response_id. Proxies: stateless full replay.
   const stateless = !route.direct;
   if (stateless) { base.store = false; base.include = ['reasoning.encrypted_content']; }
+  if (codex) {
+    base.stream = true;
+    base.text = { verbosity: 'low' };
+  }
 
   let input = history.map((m) => ({ role: m.role, content: m.text }));
   input.push({ role: 'user', content: userText });
   let prevId = null;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const body = { ...base, input };
+    const body = { ...base, input: codex ? stripItemIds(input) : input };
     if (prevId) body.previous_response_id = prevId;
     const resp = await post(route, body, input, signal);
     if (resp.error) throw new Error(resp.error.message || 'Request failed');
@@ -429,7 +500,8 @@ async function runResponses({ route, settings, tools, system, history, userText,
     const extra = [];
     if (shots.length) extra.push({ role: 'user', content: shots });
     if (steer.length) extra.push({ role: 'user', content: steerText(steer) });
-    if (stateless) input = [...input, ...(resp.output || []), ...outputs, ...extra];
+    const responseItems = codex ? stripItemIds(resp.output) : (resp.output || []);
+    if (stateless) input = [...input, ...responseItems, ...outputs, ...extra];
     else { prevId = resp.id; input = [...outputs, ...extra]; }
   }
   return '_(Stopped after too many steps.)_';
@@ -476,6 +548,8 @@ async function runChat({ route, tools, system, history, userText, ui, ctx, signa
 // ui: { step, updateStep, source, text, confirm, gate?, takeSteer? }
 // run: state shared with the page ({ agentTabs: Set, lastAgentFocus }) so it can spot a takeover.
 export async function runAgent({ settings, history, userText, ui, signal, mode, pageInfo, sessionId, memories = [], headless = false, run = null }) {
+  const provider = settings.providers[settings.provider];
+  if (provider?.oauth?.access) await ensureOAuth(settings.provider, provider);
   const route = resolveRoute(settings, sessionId);
   route.effort = pickEffort(chosenEffort(settings), effortOptions(settings.provider, settings.providers[settings.provider]));
   const permission = settings.permission || 'guard';
@@ -506,12 +580,51 @@ export async function runAgent({ settings, history, userText, ui, signal, mode, 
 // ---------------------------------------------------------------------------
 // Model listing / connection test
 
+async function listChatGPTModels(cfg) {
+  const res = await fetch(`${CHATGPT_CODEX}/models?client_version=999.0.0`, {
+    headers: {
+      authorization: `Bearer ${cfg.oauth.access}`,
+      ...(cfg.oauth.accountId ? { 'chatgpt-account-id': cfg.oauth.accountId } : {}),
+      'OpenAI-Beta': 'responses=experimental',
+      originator: 'codex_cli_rs',
+    },
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch {}
+  if (!res.ok) {
+    if ([401, 403, 404].includes(res.status)) return ['gpt-6.2-sol'];
+    throw new Error(`${res.status}: ${data?.error?.message || data?.detail || text.slice(0, 200) || res.statusText}`);
+  }
+  const list = (data?.models || []).filter((m) => m?.slug && !/auto-review|embed|image/.test(m.slug) && m.slug !== 'gpt-reserve');
+  cfg.efforts = {};
+  const ids = [];
+  for (const m of list) {
+    cfg.efforts[m.slug] = (m.supported_reasoning_levels || [])
+      .map((l) => l.effort)
+      .filter((l) => EFFORT_LEVELS.includes(l));
+    ids.push(m.slug);
+  }
+  if (!ids.length) throw new Error('No ChatGPT Codex models were returned for this account.');
+  return ids;
+}
+
 export async function listModels(key, cfg) {
+  if (cfg.oauth?.access) await ensureOAuth(key, cfg);
+  if (key === 'openai' && cfg.oauth?.access) return listChatGPTModels(cfg);
+
   let url;
   let headers = {};
   if (key === 'anthropic') {
     url = 'https://api.anthropic.com/v1/models?limit=100';
-    headers = { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
+    headers = cfg.oauth?.access
+      ? {
+          authorization: `Bearer ${cfg.oauth.access}`,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+          'anthropic-beta': 'oauth-2025-04-20',
+        }
+      : { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
   } else if (key === 'openai') {
     url = 'https://api.openai.com/v1/models';
     headers = { authorization: `Bearer ${cfg.apiKey}` };
@@ -525,7 +638,12 @@ export async function listModels(key, cfg) {
   const text = await res.text();
   let data = null;
   try { data = JSON.parse(text); } catch {}
-  if (!res.ok) throw new Error(`${res.status}: ${data?.error?.message || text.slice(0, 200) || res.statusText}`);
+  if (!res.ok) {
+    if (key === 'anthropic' && cfg.oauth?.access && [401, 403, 404].includes(res.status)) {
+      return [...new Set([cfg.model, 'claude-opus-5-5', 'claude-sonnet-5-5'].filter(Boolean))];
+    }
+    throw new Error(`${res.status}: ${data?.error?.message || text.slice(0, 200) || res.statusText}`);
+  }
   const list = data?.data || data?.models || [];
   let ids = list.map((m) => m.id || m.name).filter(Boolean);
   if (key === 'anthropic') {
