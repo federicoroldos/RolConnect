@@ -1197,7 +1197,7 @@ export const TOOLS = [
         schedule, active: true, created: Date.now(), nextRun: nextRunTime(schedule), runs: [],
       };
       await saveRoutine(r);
-      return { content: `Routine created: ${r.name} (${desc}). First run: ${new Date(r.nextRun).toLocaleString()}. The user can manage it in Settings → Routines.`, detail: desc };
+      return { content: `Routine created: ${r.name} (${desc}). First run: ${new Date(r.nextRun).toLocaleString()}. The user can manage it from Routines in the sidebar.`, detail: desc };
     },
   },
 ];

@@ -799,13 +799,6 @@ function openSettings(tab = settings.provider) {
         <button type="button" class="btn small" data-memadd>Add</button></div>
       </section>
 
-      <h3 id="routinesHead">${ICONS.routine}Routines</h3>
-      <section class="set-card">
-      <div class="routine-list" id="routineList"></div>
-      <div id="routineForm"></div>
-      <button type="button" class="btn small r-new" data-rnew>${ICONS.plus}<span>New routine</span></button>
-      </section>
-
       <h3>${ICONS.display}Appearance and data</h3>
       <section class="set-card">
       <label class="field row"><span>Theme</span>
@@ -818,12 +811,27 @@ function openSettings(tab = settings.provider) {
   m.hidden = false;
   showPane(tab);
   renderMemories();
-  renderRoutines();
   // Fill in model lists for connected accounts that have no list yet.
   for (const k of Object.keys(PROVIDERS)) {
     const c = settings.providers[k];
     if (hasCredentials(c) && modelsStale(c)) loadModels(k);
   }
+}
+
+function openRoutines() {
+  const m = $('#settingsModal');
+  m.innerHTML = `<div class="dialog" role="dialog" aria-label="Routines">
+    <div class="dlg-head"><h2>Routines</h2><button class="icon-btn" data-close title="Close">${ICONS.x}</button></div>
+    <div class="dlg-body">
+      <section class="set-card r-card">
+      <div class="routine-list" id="routineList"></div>
+      <div id="routineForm"></div>
+      <button type="button" class="btn small r-new" data-rnew>${ICONS.plus}<span>New routine</span></button>
+      </section>
+    </div>
+  </div>`;
+  m.hidden = false;
+  renderRoutines();
 }
 
 function refreshTabDots() {
@@ -894,7 +902,7 @@ async function updateMemories(fn) {
   renderMemories();
 }
 
-// ---- Routines (Settings) ----
+// ---- Routines ----
 
 const fmtWhen = (ts) => new Date(ts).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -902,6 +910,10 @@ async function renderRoutines() {
   const el = $('#routineList');
   if (!el) return;
   const list = Object.values(await getRoutines()).sort((a, b) => a.created - b.created);
+  if (!list.length) {
+    el.innerHTML = '<p class="r-empty">No routines yet. Add one here, or ask in a chat to do something on a schedule.</p>';
+    return;
+  }
   el.innerHTML = list
     .map((r) => `<div class="routine ${r.active ? '' : 'paused'}" data-rid="${esc(r.id)}">
       <div class="r-head">
@@ -1214,9 +1226,8 @@ function bind() {
     $('#searchChats').hidden = false;
   });
   $('#openRoutines').addEventListener('click', () => {
-    openSettings();
+    openRoutines();
     closeSidebarOverlay();
-    $('#routinesHead')?.scrollIntoView({ block: 'start' });
   });
   $('#openSettings').addEventListener('click', () => openSettings());
   $('#topSettings').addEventListener('click', () => openSettings());
