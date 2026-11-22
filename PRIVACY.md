@@ -8,7 +8,7 @@ RolConnect is a browser extension that turns the new tab page and the side panel
 
 These are saved only in your browser profile, with `chrome.storage.local`. They are never synced, and they are never sent to the developer:
 
-- the API keys and provider login tokens you connect
+- the API keys you enter
 - your chats, memories, routines and settings
 
 Uninstalling the extension deletes all of it.
@@ -19,14 +19,12 @@ RolConnect only sends data when you ask it to do something, or when one of your 
 
 | Service | What is sent | Why |
 | :-- | :-- | :-- |
-| The AI provider you choose: Anthropic, OpenAI or OpenCode | Your messages; the text of pages and tabs the agent reads; screenshots of tabs when Computer use is on; relevant memories; your API key or login token | To generate answers and decide on the agent's next steps |
+| The AI provider you choose: OpenCode (Zen or Go) | Your messages; the text of pages and tabs the agent reads; screenshots of tabs when Computer use is on; relevant memories; your API key | To generate answers and decide on the agent's next steps |
 | DuckDuckGo or Bing (with OpenCode only) | Search queries | Web search |
 | The websites the agent opens | Normal page requests, like any visit from your browser | To read pages and act on them |
 
 How each AI provider handles what it receives is governed by that provider's own terms and privacy policy:
 
-- [Anthropic](https://www.anthropic.com/legal/privacy)
-- [OpenAI](https://openai.com/policies/privacy-policy)
 - [OpenCode](https://opencode.ai)
 
 ## Permissions and data access

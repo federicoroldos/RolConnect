@@ -26,13 +26,13 @@ powershell -ExecutionPolicy Bypass -File store\build.ps1
 
 ### Single purpose description
 
-RolConnect replaces the new tab page and adds a side panel with an AI assistant that can browse for the user: it searches the web, reads pages and carries out tasks in the user's tabs, using the AI provider and account the user connects.
+RolConnect replaces the new tab page and adds a side panel with an AI assistant that can browse for the user: it searches the web, reads pages and carries out tasks in the user's tabs, using an OpenCode Zen or OpenCode Go API key the user provides.
 
 ### Permission justifications
 
 | Permission | Justification |
 | :-- | :-- |
-| `storage` | Saves the user's settings, API keys and login tokens, chats, memories and routines locally in the browser profile. |
+| `storage` | Saves the user's settings, API keys, chats, memories and routines locally in the browser profile. |
 | `unlimitedStorage` | Chat history and memories can exceed the default 10 MB local storage quota over time. |
 | `tabs` | Lists the open tabs and reads their titles and URLs, so the assistant can tell which page the user means. Also opens, switches and closes the tabs the agent works in. |
 | `scripting` | Reads the text of a page, and clicks or types on it, when the user asks the assistant to read that page or act on it. |
@@ -55,7 +55,7 @@ No. All code ships in the package. The extension calls the AI provider's API ove
 Check these:
 
 - **Personally identifiable information:** the user's messages and memories can contain it.
-- **Authentication information:** the user's own API key or provider login token, which is sent only to that provider.
+- **Authentication information:** the user's own API key, which is sent only to OpenCode.
 - **Personal communications:** pages the user asks the agent to read, such as email, can contain them.
 - **Web history:** only when "Use browsing history" is on.
 - **Website content:** page text and screenshots of the tabs the agent works in.
@@ -75,7 +75,7 @@ RolConnect turns every new tab, and the side panel, into an AI assistant that ca
 
 Ask a question and it searches the web, reads the best sources and answers with links. Ask for a task and it does the steps itself: it opens tabs, clicks, fills in forms and presses keys, and you watch every step as it happens.
 
-• Works with Claude, ChatGPT or OpenCode. Sign in with your Claude or ChatGPT plan. OpenCode connects with an API key.
+• Works with Claude, GPT, Kimi, GLM and more through OpenCode Zen or OpenCode Go. Bring your own API key.
 • Computer use: it sees tabs through screenshots and uses a real mouse and keyboard, so it can handle canvas apps, maps, editors and drag and drop.
 • You choose the permission level: Read only, Guard (it asks before sending, buying, deleting or publishing), or Full access. It never types passwords or card numbers.
 • Talk to it while it works: steer it mid-task, queue follow-ups, or pause and take over.
@@ -84,7 +84,7 @@ Ask a question and it searches the web, reads the best sources and answers with 
 • Routines: scheduled tasks, like a morning news summary or a price check, that run in the background and notify you.
 • Side panel (Ctrl+Shift+Y) next to any page, so "summarize this" just works. Or right-click → Ask RolConnect.
 
-Private by design: your keys, login tokens, chats and memories stay in your browser. Requests go directly to the AI provider you pick, and there are no analytics or tracking.
+Private by design: your keys, chats and memories stay in your browser. Requests go directly to OpenCode, and there are no analytics or tracking.
 
 Open source (MIT): https://github.com/federicoroldos/RolConnect
 ```
@@ -109,7 +109,7 @@ AI agent; new tab; side panel; Claude; ChatGPT; browser automation; AI assistant
 ## Notes for certification
 
 ```
-RolConnect needs an AI account to answer. For this test, use an OpenCode Zen API key (small prepaid balance): <PASTE KEY HERE>
+RolConnect needs an OpenCode API key to answer. For this test, use an OpenCode Zen key (small prepaid balance): <PASTE KEY HERE>
 
 How to test:
 1. Open a new tab. Choose "Keep changes" if Edge asks about the new tab page. Settings opens.

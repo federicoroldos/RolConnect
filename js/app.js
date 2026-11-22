@@ -4,7 +4,6 @@ import {
 } from './storage.js';
 import { renderMarkdown, esc } from './markdown.js';
 import { runAgent, listModels, effortOptions, pickEffort, effortKey, chosenEffort, buildHistory } from './agent.js';
-import { connectClaude, connectChatGPT } from './oauth.js';
 import { currentPageInfo } from './tools.js';
 import { DAYS, normalizeSchedule, nextRunTime, describeSchedule } from './routines.js';
 
@@ -332,7 +331,7 @@ function renderModelPill() {
 const EFFORT_LABEL = { default: 'Auto', none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', ultra: 'Ultra' };
 
 function currentEffortOptions() {
-  return effortOptions(settings.provider, settings.providers[settings.provider]);
+  return effortOptions(settings.providers[settings.provider]);
 }
 
 function renderEffortPill() {
@@ -385,13 +384,10 @@ function toggleEffortMenu(show) {
   menu.hidden = !open;
 }
 
-function modelOptions(key, cfg) {
+function modelOptions(cfg) {
   const list = [...(cfg.models || [])];
   if (cfg.model && !list.includes(cfg.model)) list.unshift(cfg.model);
-  if (!list.length) {
-    const hint = PROVIDERS[key]?.oauth ? 'Sign in to load models' : 'Add your API key to load models';
-    return `<option value="" disabled selected>${hasCredentials(key, cfg) ? 'No models loaded yet' : hint}</option>`;
-  }
+  if (!list.length) return `<option value="" disabled selected>${hasCredentials(cfg) ? 'No models loaded yet' : 'Add your API key to load models'}</option>`;
   return list.map((m) => `<option value="${esc(m)}" ${m === cfg.model ? 'selected' : ''}>${esc(m)}</option>`).join('');
 }
 
@@ -412,7 +408,7 @@ function renderModelMenu() {
     <div class="mm-title">Provider</div>${items}
     <div class="mm-title">Model</div>
     <div class="mm-model">
-      <select id="mmModel">${modelOptions(settings.provider, cfg)}</select>
+      <select id="mmModel">${modelOptions(cfg)}</select>
     </div>
     <button type="button" class="mm-manage" id="mmManage">${ICONS.key}<span>Manage accounts & settings</span></button>`;
 }
@@ -702,35 +698,17 @@ function regenerate() {
 // ---------------------------------------------------------------------------
 // Settings modal
 
-function oauthBox(key) {
-  const p = PROVIDERS[key];
-  const cfg = settings.providers[key];
-  const oauth = cfg.oauth;
-  return `<div class="oauth-box">
-    <div class="oauth-main">${oauth
-      ? `<span class="oauth-account">${ICONS.check}<span>${esc(oauth.label || `${p.label} account connected`)}</span></span>
-         <button type="button" class="btn ghost small" data-signout>Sign out</button>`
-      : `<button type="button" class="btn primary" data-oauth>Sign in with ${esc(p.label)}</button>`}
-    </div>
-    <span class="status" data-ostatus>${oauth
-      ? 'Using your subscription login.'
-      : key === 'anthropic' ? 'Use your Claude Pro or Max plan.' : 'Use your ChatGPT Plus or Pro plan.'}</span>
-  </div>`;
-}
-
 function providerPane(key) {
   const p = PROVIDERS[key];
   const cfg = settings.providers[key];
-  const auth = p.oauth ? oauthBox(key) : `
+  return `<div class="pane" data-pane="${key}">
     ${p.keyUrl ? `<a class="btn signin" href="${p.keyUrl}" target="_blank" rel="noopener">${ICONS.external}<span>Sign in to ${esc(p.vendor)} & get a key</span></a>` : ''}
     <label class="field"><span>API key</span>
       <div class="key-row"><input data-f="apiKey" type="password" value="${esc(cfg.apiKey || '')}" placeholder="${esc(p.keyHint)}" spellcheck="false" autocomplete="off">
       <button type="button" class="btn ghost small" data-showkey>Show</button></div>
-    </label>`;
-  return `<div class="pane" data-pane="${key}">
-    ${auth}
+    </label>
     <label class="field"><span>Model</span>
-      <div class="key-row"><select data-f="model">${modelOptions(key, cfg)}</select>
+      <div class="key-row"><select data-f="model">${modelOptions(cfg)}</select>
       <button type="button" class="btn ghost small" data-loadmodels title="Reload the model list">Refresh</button></div>
     </label>
     <div class="pane-actions">
@@ -792,7 +770,7 @@ function openSettings(tab = settings.provider) {
   // Fill in model lists for connected accounts that have no list yet.
   for (const k of Object.keys(PROVIDERS)) {
     const c = settings.providers[k];
-    if (hasCredentials(k, c) && modelsStale(k, c)) loadModels(k);
+    if (hasCredentials(c) && modelsStale(c)) loadModels(k);
   }
 }
 
@@ -805,39 +783,8 @@ function refreshTabDots() {
   });
 }
 
-async function connectPaneOAuth(pane) {
-  const key = pane.dataset.pane;
-  const cfg = settings.providers[key];
-  const st = (cls, text) => {
-    const s = $('[data-ostatus]', pane);
-    if (s) { s.className = `status ${cls}`; s.textContent = text; }
-  };
-  const btn = $('[data-oauth]', pane);
-  if (btn) btn.disabled = true;
-  st('', key === 'anthropic' ? 'Waiting for you to authorize Claude in the new tab…' : 'Starting ChatGPT sign-in…');
-  try {
-    const tokens = key === 'anthropic'
-      ? await connectClaude()
-      : await connectChatGPT({
-          onCode(code) {
-            st('', `Enter code ${code} on the ChatGPT page.`);
-            navigator.clipboard?.writeText(code)?.catch(() => {});
-          },
-        });
-    cfg.oauth = tokens;
-    await saveSettings(settings);
-    toast(`Signed in to ${PROVIDERS[key].label}.`);
-    if (!$('#settingsModal').hidden) openSettings(key);
-    loadModels(key);
-  } catch (err) {
-    st('bad', err.message || 'Sign-in failed.');
-    if (btn) btn.disabled = false;
-  }
-}
-
-function modelsStale(key, cfg) {
-  if (!(cfg.models || []).length) return true;
-  return cfg.oauth ? !cfg.efforts : key !== 'openai' && !cfg.efforts;
+function modelsStale(cfg) {
+  return !(cfg.models || []).length || !cfg.efforts;
 }
 
 // Load the provider's model list (runs automatically when a key is entered).
@@ -849,10 +796,7 @@ async function loadModels(key) {
     const s = pane() && $('[data-status]', pane());
     if (s) { s.className = `status ${cls}`; s.textContent = text; }
   };
-  if (!hasCredentials(key, cfg)) {
-    setStatus('', PROVIDERS[key]?.oauth ? 'Sign in to load models.' : '');
-    return false;
-  }
+  if (!hasCredentials(cfg)) { setStatus('', ''); return false; }
   const seq = (loadSeq[key] = (loadSeq[key] || 0) + 1);
   setStatus('', 'Loading models…');
   let ok = false;
@@ -875,7 +819,7 @@ async function loadModels(key) {
   await saveSettings(settings);
   const p = pane();
   if (p) {
-    $('[data-f="model"]', p).innerHTML = modelOptions(key, cfg);
+    $('[data-f="model"]', p).innerHTML = modelOptions(cfg);
     refreshTabDots();
   }
   renderModelPill();
@@ -1030,18 +974,6 @@ function bindSettings() {
     }
 
     const pane = e.target.closest('.pane');
-    if (e.target.closest('[data-oauth]')) return connectPaneOAuth(pane);
-    if (e.target.closest('[data-signout]')) {
-      const key = pane.dataset.pane;
-      const cfg = settings.providers[key];
-      cfg.oauth = null;
-      cfg.models = [];
-      cfg.efforts = {};
-      await saveSettings(settings);
-      toast(`Signed out of ${PROVIDERS[key].label}.`);
-      openSettings(key);
-      return;
-    }
     if (e.target.closest('[data-showkey]')) {
       const inp = $('[data-f="apiKey"]', pane);
       inp.type = inp.type === 'password' ? 'text' : 'password';
@@ -1055,7 +987,7 @@ function bindSettings() {
       if (!isConfigured(settings, key)) {
         const s = $('[data-status]', pane);
         s.className = 'status bad';
-        s.textContent = hasCredentials(key, cfg) ? 'Pick a model first.' : (PROVIDERS[key]?.oauth ? 'Sign in first.' : 'Add an API key first.');
+        s.textContent = hasCredentials(cfg) ? 'Pick a model first.' : 'Add your API key first.';
         return;
       }
       settings.provider = key;
@@ -1342,10 +1274,10 @@ async function init() {
   // Refresh model lists saved before effort info existed, quietly in the background.
   for (const k of Object.keys(PROVIDERS)) {
     const c = settings.providers[k];
-    if (hasCredentials(k, c) && modelsStale(k, c)) loadModels(k);
+    if (hasCredentials(c) && modelsStale(c)) loadModels(k);
   }
   if (!isConfigured(settings) && !Object.keys(PROVIDERS).some((k) => isConfigured(settings, k))) {
-    setTimeout(() => openSettings('anthropic'), 300);
+    setTimeout(() => openSettings('opencode'), 300);
   }
   $('#input').focus();
 }
