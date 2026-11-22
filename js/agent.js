@@ -12,8 +12,6 @@ const isOpenCode = (key) => key === 'opencode' || key === 'opencodego';
 
 // Claude models that take the dynamic-filtering web search tool version.
 const CLAUDE_NEW_SEARCH = /^claude-(fable|mythos|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6)/;
-// Claude models that support server-side refusal fallbacks.
-const CLAUDE_FALLBACKS = /^claude-(opus-5(-5)?|fable-5-[12]|sonnet-5-5)$/;
 // OpenAI models that accept a reasoning effort.
 const OPENAI_REASONING = /^(gpt-5|gpt-6|o\d)/;
 
@@ -85,49 +83,33 @@ function resolveRoute(settings, sessionId) {
   if (!model) throw new Error('Pick a model in Settings first.');
 
   if (key === 'anthropic') {
-    if (cfg.oauth?.access) {
-      return {
-        format: 'anthropic', direct: true, oauth: 'anthropic', identity: true, model, native: settings.nativeSearch,
-        url: 'https://api.anthropic.com/v1/messages',
-        headers: {
-          authorization: `Bearer ${cfg.oauth.access}`,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-          'anthropic-beta': CLAUDE_OAUTH_BETA,
-          'x-app': 'cli',
-        },
-      };
-    }
+    if (!cfg.oauth?.access) throw new Error('Sign in to Claude in Settings first.');
     return {
-      format: 'anthropic', direct: true, model, native: settings.nativeSearch,
+      format: 'anthropic', direct: true, oauth: 'anthropic', identity: true, model, native: settings.nativeSearch,
       url: 'https://api.anthropic.com/v1/messages',
       headers: {
-        'x-api-key': cfg.apiKey,
+        authorization: `Bearer ${cfg.oauth.access}`,
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
+        'anthropic-beta': CLAUDE_OAUTH_BETA,
+        'x-app': 'cli',
       },
     };
   }
   if (key === 'openai') {
-    if (cfg.oauth?.access) {
-      return {
-        format: 'responses', direct: false, oauth: 'openai', codex: true, model, native: false,
-        url: `${CHATGPT_CODEX}/responses`,
-        headers: {
-          authorization: `Bearer ${cfg.oauth.access}`,
-          ...(cfg.oauth.accountId ? { 'chatgpt-account-id': cfg.oauth.accountId } : {}),
-          'OpenAI-Beta': 'responses=experimental',
-          originator: 'codex_cli_rs',
-          accept: 'text/event-stream',
-          ...(sessionId ? { session_id: sessionId, conversation_id: sessionId } : {}),
-        },
-        sse: true,
-      };
-    }
+    if (!cfg.oauth?.access) throw new Error('Sign in to ChatGPT in Settings first.');
     return {
-      format: 'responses', direct: true, model, native: settings.nativeSearch,
-      url: 'https://api.openai.com/v1/responses',
-      headers: { authorization: `Bearer ${cfg.apiKey}` },
+      format: 'responses', direct: false, oauth: 'openai', codex: true, model, native: false,
+      url: `${CHATGPT_CODEX}/responses`,
+      headers: {
+        authorization: `Bearer ${cfg.oauth.access}`,
+        ...(cfg.oauth.accountId ? { 'chatgpt-account-id': cfg.oauth.accountId } : {}),
+        'OpenAI-Beta': 'responses=experimental',
+        originator: 'codex_cli_rs',
+        accept: 'text/event-stream',
+        ...(sessionId ? { session_id: sessionId, conversation_id: sessionId } : {}),
+      },
+      sse: true,
     };
   }
   if (isOpenCode(key)) {
@@ -369,23 +351,14 @@ async function runAnthropic({ route, settings, tools, system, history, userText,
     });
   }
 
-  const headers = { ...route.headers };
   const systemBlocks = route.identity
     ? [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }, { type: 'text', text: system }]
     : system;
   const base = { model: route.model, max_tokens: 16000, system: systemBlocks, tools: toolDefs };
-  if (route.direct && !route.oauth && CLAUDE_FALLBACKS.test(route.model)) {
-    // Server-side refusal fallback: reroutes declined requests to a suitable model.
-    const betas = new Set((headers['anthropic-beta'] || '').split(',').map((b) => b.trim()).filter(Boolean));
-    betas.add('server-side-fallback-2026-07-01');
-    headers['anthropic-beta'] = [...betas].join(',');
-    base.fallbacks = 'default';
-  }
   if (route.effort) {
     base.output_config = { effort: route.effort };
     if (route.effort === 'xhigh' || route.effort === 'max') base.max_tokens = 64000; // room to think and act
   }
-  route.headers = headers;
 
   let answer = '';
   for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -610,51 +583,51 @@ async function listChatGPTModels(cfg) {
 }
 
 export async function listModels(key, cfg) {
-  if (cfg.oauth?.access) await ensureOAuth(key, cfg);
-  if (key === 'openai' && cfg.oauth?.access) return listChatGPTModels(cfg);
-
-  let url;
-  let headers = {};
   if (key === 'anthropic') {
-    url = 'https://api.anthropic.com/v1/models?limit=100';
-    headers = cfg.oauth?.access
-      ? {
-          authorization: `Bearer ${cfg.oauth.access}`,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-          'anthropic-beta': 'oauth-2025-04-20',
-        }
-      : { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
-  } else if (key === 'openai') {
-    url = 'https://api.openai.com/v1/models';
-    headers = { authorization: `Bearer ${cfg.apiKey}` };
-  } else if (isOpenCode(key)) {
-    url = `${key === 'opencodego' ? ZEN_GO : ZEN}/v1/models`;
-    headers = { authorization: `Bearer ${cfg.apiKey}` };
-  } else {
-    throw new Error(`Unknown provider "${key}"`);
-  }
-  const res = await fetch(url, { headers });
-  const text = await res.text();
-  let data = null;
-  try { data = JSON.parse(text); } catch {}
-  if (!res.ok) {
-    if (key === 'anthropic' && cfg.oauth?.access && [401, 403, 404].includes(res.status)) {
-      return [...new Set([cfg.model, 'claude-opus-5-5', 'claude-sonnet-5-5'].filter(Boolean))];
+    if (!cfg.oauth?.access) throw new Error('Sign in to Claude in Settings first.');
+    await ensureOAuth(key, cfg);
+    const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+      headers: {
+        authorization: `Bearer ${cfg.oauth.access}`,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'anthropic-beta': 'oauth-2025-04-20',
+      },
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch {}
+    if (!res.ok) {
+      if ([401, 403, 404].includes(res.status)) {
+        return [...new Set([cfg.model, 'claude-opus-5-5', 'claude-sonnet-5-5'].filter(Boolean))];
+      }
+      throw new Error(`${res.status}: ${data?.error?.message || text.slice(0, 200) || res.statusText}`);
     }
-    throw new Error(`${res.status}: ${data?.error?.message || text.slice(0, 200) || res.statusText}`);
-  }
-  const list = data?.data || data?.models || [];
-  let ids = list.map((m) => m.id || m.name).filter(Boolean);
-  if (key === 'anthropic') {
+    const list = data?.data || data?.models || [];
     // The Models API reports which effort levels each Claude model accepts.
     cfg.efforts = {};
     for (const m of list) {
       const e = m?.capabilities?.effort;
       if (m?.id && e) cfg.efforts[m.id] = e.supported ? EFFORT_LEVELS.filter((l) => e[l]?.supported) : [];
     }
+    return [...new Set(list.map((m) => m.id || m.name).filter(Boolean))].sort();
   }
+
+  if (key === 'openai') {
+    if (!cfg.oauth?.access) throw new Error('Sign in to ChatGPT in Settings first.');
+    await ensureOAuth(key, cfg);
+    return listChatGPTModels(cfg);
+  }
+
   if (isOpenCode(key)) {
+    const res = await fetch(`${key === 'opencodego' ? ZEN_GO : ZEN}/v1/models`, {
+      headers: { authorization: `Bearer ${cfg.apiKey}` },
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch {}
+    if (!res.ok) throw new Error(`${res.status}: ${data?.error?.message || text.slice(0, 200) || res.statusText}`);
+    const list = data?.data || data?.models || [];
     // Remember which API each model speaks (the recommended one if we support it, else any we do).
     cfg.apis = {};
     cfg.efforts = {};
@@ -666,8 +639,11 @@ export async function listModels(key, cfg) {
       const api = API_FAMILY[m.recommended_api] ? m.recommended_api : offered.find((a) => API_FAMILY[a]) || m.recommended_api;
       if (api) cfg.apis[m.id] = api;
     }
+    const ids = list
+      .map((m) => m.id || m.name)
+      .filter((id) => id && opencodeFamily(id, cfg.apis) !== 'unsupported' && !/embed|image/.test(id));
+    return [...new Set(ids)].sort();
   }
-  if (key === 'openai') ids = ids.filter((id) => /^(gpt-|o\d|chatgpt)/.test(id) && !/(audio|realtime|tts|transcribe|image|search-preview|embedding)/.test(id));
-  if (isOpenCode(key)) ids = ids.filter((id) => opencodeFamily(id, cfg.apis) !== 'unsupported' && !/embed|image/.test(id));
-  return [...new Set(ids)].sort();
+
+  throw new Error(`Unknown provider "${key}"`);
 }

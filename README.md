@@ -65,7 +65,7 @@ The same chat next to whatever page you're on (**Ctrl+Shift+Y**). It knows which
 2. Open `edge://extensions` and turn on **Developer mode**.
 3. Click **Load unpacked** and pick the `RolConnect` folder (the one with `manifest.json`).
 4. Open a new tab. When Edge asks about the changed new tab page, choose **Keep changes**.
-5. Settings opens by itself: sign in with Claude or ChatGPT, or paste an API key, then pick a model.
+5. Settings opens by itself: sign in with Claude or ChatGPT, or paste an OpenCode key, then pick a model.
 
 To update, pull or download the new version and click **↻** on RolConnect in `edge://extensions`.
 
@@ -73,15 +73,15 @@ To update, pull or download the new version and click **↻** on RolConnect in `
 
 | Provider | What you need | Web search |
 | :-- | :-- | :-- |
-| **Claude** | Sign in with your Claude Pro or Max plan, or use an API key from [platform.claude.com](https://platform.claude.com) | Claude's own |
-| **ChatGPT** | Sign in with your ChatGPT Plus or Pro plan, or use an API key from [platform.openai.com](https://platform.openai.com/api-keys) | OpenAI's own |
+| **Claude** | Sign in with your Claude Pro or Max plan | Claude's own |
+| **ChatGPT** | Sign in with your ChatGPT Plus or Pro plan | OpenAI's own |
 | **OpenCode Zen** | Key from [opencode.ai/zen](https://opencode.ai/zen). One key covers Claude, GPT, Kimi, GLM, Qwen, DeepSeek… | DuckDuckGo → Bing |
 | **OpenCode Go** | Key from your OpenCode Go subscription | DuckDuckGo → Bing |
 
-Models load as soon as you connect an account or paste a key. Under the chat box you can switch provider and model, and set the thinking effort for models that have it.
+Models load as soon as you connect an account or paste an OpenCode key. Under the chat box you can switch provider and model, and set the thinking effort for models that have it.
 
 > [!NOTE]
-> Claude and ChatGPT sign-in uses the same OAuth flow as Claude Code and Codex, so it needs a Claude Pro/Max or ChatGPT Plus/Pro plan and can stop working if the provider changes it. Use an API key if you need guaranteed access.
+> Claude and ChatGPT sign-in uses the same OAuth flow as Claude Code and Codex, so it needs a Claude Pro/Max or ChatGPT Plus/Pro plan and can stop working if the provider changes it. OpenCode Zen and OpenCode Go still use API keys.
 
 <details>
 <summary><b>Everything the agent can do</b></summary>
@@ -105,7 +105,7 @@ Models load as soon as you connect an account or paste a key. Under the chat box
 
 ## Privacy
 
-- Your API keys, chats and memories stay in this browser profile. They're never synced or sent anywhere else.
+- Your login tokens, API keys, chats and memories stay in this browser profile. They're never synced or sent anywhere else.
 - Your messages, and the pages the agent reads, go only to the provider you picked. With OpenCode, web searches go to DuckDuckGo or Bing.
 - No analytics, no tracking, no servers of its own.
 

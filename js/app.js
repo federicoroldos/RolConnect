@@ -385,10 +385,13 @@ function toggleEffortMenu(show) {
   menu.hidden = !open;
 }
 
-function modelOptions(cfg) {
+function modelOptions(key, cfg) {
   const list = [...(cfg.models || [])];
   if (cfg.model && !list.includes(cfg.model)) list.unshift(cfg.model);
-  if (!list.length) return `<option value="" disabled selected>${hasCredentials(cfg) ? 'No models loaded yet' : 'Add an API key or sign in to load models'}</option>`;
+  if (!list.length) {
+    const hint = PROVIDERS[key]?.oauth ? 'Sign in to load models' : 'Add your API key to load models';
+    return `<option value="" disabled selected>${hasCredentials(key, cfg) ? 'No models loaded yet' : hint}</option>`;
+  }
   return list.map((m) => `<option value="${esc(m)}" ${m === cfg.model ? 'selected' : ''}>${esc(m)}</option>`).join('');
 }
 
@@ -409,7 +412,7 @@ function renderModelMenu() {
     <div class="mm-title">Provider</div>${items}
     <div class="mm-title">Model</div>
     <div class="mm-model">
-      <select id="mmModel">${modelOptions(cfg)}</select>
+      <select id="mmModel">${modelOptions(settings.provider, cfg)}</select>
     </div>
     <button type="button" class="mm-manage" id="mmManage">${ICONS.key}<span>Manage accounts & settings</span></button>`;
 }
@@ -710,7 +713,7 @@ function oauthBox(key) {
       : `<button type="button" class="btn primary" data-oauth>Sign in with ${esc(p.label)}</button>`}
     </div>
     <span class="status" data-ostatus>${oauth
-      ? `Using your subscription login.${cfg.apiKey ? ' Sign out to use the API key.' : ''}`
+      ? 'Using your subscription login.'
       : key === 'anthropic' ? 'Use your Claude Pro or Max plan.' : 'Use your ChatGPT Plus or Pro plan.'}</span>
   </div>`;
 }
@@ -718,15 +721,16 @@ function oauthBox(key) {
 function providerPane(key) {
   const p = PROVIDERS[key];
   const cfg = settings.providers[key];
-  return `<div class="pane" data-pane="${key}">
-    ${p.oauth ? `${oauthBox(key)}<div class="oauth-sep">Or use an API key</div>` : ''}
-    ${p.keyUrl ? `<a class="btn signin" href="${p.keyUrl}" target="_blank" rel="noopener">${ICONS.external}<span>${p.oauth ? `Get an API key from ${esc(p.vendor)}` : `Sign in to ${esc(p.vendor)} & get a key`}</span></a>` : ''}
+  const auth = p.oauth ? oauthBox(key) : `
+    ${p.keyUrl ? `<a class="btn signin" href="${p.keyUrl}" target="_blank" rel="noopener">${ICONS.external}<span>Sign in to ${esc(p.vendor)} & get a key</span></a>` : ''}
     <label class="field"><span>API key</span>
       <div class="key-row"><input data-f="apiKey" type="password" value="${esc(cfg.apiKey || '')}" placeholder="${esc(p.keyHint)}" spellcheck="false" autocomplete="off">
       <button type="button" class="btn ghost small" data-showkey>Show</button></div>
-    </label>
+    </label>`;
+  return `<div class="pane" data-pane="${key}">
+    ${auth}
     <label class="field"><span>Model</span>
-      <div class="key-row"><select data-f="model">${modelOptions(cfg)}</select>
+      <div class="key-row"><select data-f="model">${modelOptions(key, cfg)}</select>
       <button type="button" class="btn ghost small" data-loadmodels title="Reload the model list">Refresh</button></div>
     </label>
     <div class="pane-actions">
@@ -788,7 +792,7 @@ function openSettings(tab = settings.provider) {
   // Fill in model lists for connected accounts that have no list yet.
   for (const k of Object.keys(PROVIDERS)) {
     const c = settings.providers[k];
-    if (hasCredentials(c) && modelsStale(k, c)) loadModels(k);
+    if (hasCredentials(k, c) && modelsStale(k, c)) loadModels(k);
   }
 }
 
@@ -845,7 +849,10 @@ async function loadModels(key) {
     const s = pane() && $('[data-status]', pane());
     if (s) { s.className = `status ${cls}`; s.textContent = text; }
   };
-  if (!hasCredentials(cfg)) { setStatus('', ''); return false; }
+  if (!hasCredentials(key, cfg)) {
+    setStatus('', PROVIDERS[key]?.oauth ? 'Sign in to load models.' : '');
+    return false;
+  }
   const seq = (loadSeq[key] = (loadSeq[key] || 0) + 1);
   setStatus('', 'Loading models…');
   let ok = false;
@@ -868,7 +875,7 @@ async function loadModels(key) {
   await saveSettings(settings);
   const p = pane();
   if (p) {
-    $('[data-f="model"]', p).innerHTML = modelOptions(cfg);
+    $('[data-f="model"]', p).innerHTML = modelOptions(key, cfg);
     refreshTabDots();
   }
   renderModelPill();
@@ -1033,7 +1040,6 @@ function bindSettings() {
       await saveSettings(settings);
       toast(`Signed out of ${PROVIDERS[key].label}.`);
       openSettings(key);
-      if (cfg.apiKey) loadModels(key);
       return;
     }
     if (e.target.closest('[data-showkey]')) {
@@ -1049,7 +1055,7 @@ function bindSettings() {
       if (!isConfigured(settings, key)) {
         const s = $('[data-status]', pane);
         s.className = 'status bad';
-        s.textContent = hasCredentials(cfg) ? 'Pick a model first.' : 'Connect an account first.';
+        s.textContent = hasCredentials(key, cfg) ? 'Pick a model first.' : (PROVIDERS[key]?.oauth ? 'Sign in first.' : 'Add an API key first.');
         return;
       }
       settings.provider = key;
@@ -1109,11 +1115,6 @@ function bindSettings() {
       const key = e.target.closest('.pane').dataset.pane;
       settings.providers[key][f] = e.target.value.trim();
       if (f === 'apiKey') {
-        if (settings.providers[key].apiKey) {
-          settings.providers[key].oauth = null;
-          const box = $('.oauth-box', e.target.closest('.pane'));
-          if (box) box.outerHTML = oauthBox(key);
-        }
         // Auto-load the model list shortly after a key is typed or pasted.
         clearTimeout(loadTimers[key]);
         loadTimers[key] = setTimeout(() => loadModels(key), 600);
@@ -1341,7 +1342,7 @@ async function init() {
   // Refresh model lists saved before effort info existed, quietly in the background.
   for (const k of Object.keys(PROVIDERS)) {
     const c = settings.providers[k];
-    if (hasCredentials(c) && modelsStale(k, c)) loadModels(k);
+    if (hasCredentials(k, c) && modelsStale(k, c)) loadModels(k);
   }
   if (!isConfigured(settings) && !Object.keys(PROVIDERS).some((k) => isConfigured(settings, k))) {
     setTimeout(() => openSettings('anthropic'), 300);

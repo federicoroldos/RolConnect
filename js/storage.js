@@ -4,8 +4,6 @@ export const PROVIDERS = {
   anthropic: {
     label: 'Claude',
     vendor: 'Anthropic',
-    keyUrl: 'https://platform.claude.com/settings/keys',
-    keyHint: 'sk-ant-…',
     defaultModel: 'claude-opus-5-5',
     oauth: true,
     color: '#d97757',
@@ -13,8 +11,6 @@ export const PROVIDERS = {
   openai: {
     label: 'ChatGPT',
     vendor: 'OpenAI',
-    keyUrl: 'https://platform.openai.com/api-keys',
-    keyHint: 'sk-…',
     defaultModel: 'gpt-5.5',
     oauth: true,
     color: '#10a37f',
@@ -40,8 +36,8 @@ export const PROVIDERS = {
 const DEFAULTS = {
   provider: 'anthropic',
   providers: {
-    anthropic: { apiKey: '', oauth: null, model: PROVIDERS.anthropic.defaultModel, models: [] },
-    openai: { apiKey: '', oauth: null, model: PROVIDERS.openai.defaultModel, models: [] },
+    anthropic: { oauth: null, model: PROVIDERS.anthropic.defaultModel, models: [] },
+    openai: { oauth: null, model: PROVIDERS.openai.defaultModel, models: [] },
     opencode: { apiKey: '', model: PROVIDERS.opencode.defaultModel, models: [], apis: {} },
     opencodego: { apiKey: '', model: PROVIDERS.opencodego.defaultModel, models: [], apis: {} },
   },
@@ -68,6 +64,15 @@ export async function getSettings() {
   const { settings } = await chrome.storage.local.get('settings');
   const s = merge(DEFAULTS, settings || {});
   delete s.providers.custom; // removed provider
+  let cleaned = false;
+  for (const [key, p] of Object.entries(PROVIDERS)) {
+    if (!p.oauth || s.providers[key]?.apiKey === undefined) continue;
+    delete s.providers[key].apiKey; // Claude and ChatGPT use sign-in only
+    cleaned = true;
+  }
+  if (cleaned) {
+    try { await chrome.storage.local.set({ settings: s }); } catch {}
+  }
   if (!PROVIDERS[s.provider]) s.provider = 'anthropic';
   // Older versions had two toggles instead of permission levels.
   if (!settings?.permission) s.permission = settings?.browserControl === false ? 'read' : settings?.confirmActions === false ? 'full' : 'guard';
@@ -80,14 +85,15 @@ export async function saveSettings(settings) {
   await chrome.storage.local.set({ settings });
 }
 
-export function hasCredentials(cfg) {
-  return !!(cfg?.apiKey || cfg?.oauth?.access);
+export function hasCredentials(key, cfg) {
+  if (!cfg) return false;
+  return PROVIDERS[key]?.oauth ? !!cfg.oauth?.access : !!cfg.apiKey;
 }
 
 export function isConfigured(settings, key = settings.provider) {
   const p = settings.providers[key];
   if (!p) return false;
-  return !!(hasCredentials(p) && p.model);
+  return !!(hasCredentials(key, p) && p.model);
 }
 
 // ---- chats ----

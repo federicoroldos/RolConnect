@@ -75,7 +75,7 @@ RolConnect turns every new tab, and the side panel, into an AI assistant that ca
 
 Ask a question and it searches the web, reads the best sources and answers with links. Ask for a task and it does the steps itself: it opens tabs, clicks, fills in forms and presses keys, and you watch every step as it happens.
 
-• Works with Claude, ChatGPT or OpenCode. Sign in with your Claude or ChatGPT plan, or bring your own API key.
+• Works with Claude, ChatGPT or OpenCode. Sign in with your Claude or ChatGPT plan. OpenCode connects with an API key.
 • Computer use: it sees tabs through screenshots and uses a real mouse and keyboard, so it can handle canvas apps, maps, editors and drag and drop.
 • You choose the permission level: Read only, Guard (it asks before sending, buying, deleting or publishing), or Full access. It never types passwords or card numbers.
 • Talk to it while it works: steer it mid-task, queue follow-ups, or pause and take over.
@@ -109,7 +109,7 @@ AI agent; new tab; side panel; Claude; ChatGPT; browser automation; AI assistant
 ## Notes for certification
 
 ```
-RolConnect needs an API key from an AI provider to answer. Test key (OpenCode Zen, small prepaid balance): <PASTE KEY HERE>
+RolConnect needs an AI account to answer. For this test, use an OpenCode Zen API key (small prepaid balance): <PASTE KEY HERE>
 
 How to test:
 1. Open a new tab. Choose "Keep changes" if Edge asks about the new tab page. Settings opens.
