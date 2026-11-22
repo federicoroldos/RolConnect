@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "RolConnect — AI New Tab & Browsing Agent",
-  "short_name": "RolConnect",
-  "version": "0.4.1",
+  "name": "Rold Harness: AI New Tab & Browsing Agent",
+  "short_name": "Rold Harness",
+  "version": "0.5.0",
   "description": "Your new tab and side panel as an AI agent that searches the web, reads pages and uses your tabs. Claude, GPT and more through OpenCode Zen or OpenCode Go.",
-  "homepage_url": "https://github.com/federicoroldos/RolConnect",
+  "homepage_url": "https://github.com/federicoroldos/RoldHarness",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon16.png",
@@ -39,7 +39,7 @@
     "default_path": "sidepanel.html"
   },
   "action": {
-    "default_title": "Open RolConnect in the side panel",
+    "default_title": "Open Rold Harness in the side panel",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png"
@@ -48,7 +48,7 @@
   "commands": {
     "_execute_action": {
       "suggested_key": { "default": "Ctrl+Shift+Y" },
-      "description": "Open the RolConnect side panel"
+      "description": "Open the Rold Harness side panel"
     }
   }
 }

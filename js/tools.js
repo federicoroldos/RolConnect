@@ -10,7 +10,7 @@ const EXT_ORIGIN = chrome.runtime.getURL('');
 const uid = (p = '') => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
 // Tabs the agent opens live in their own tab group, which the user can take over at any time.
-export const AGENT_GROUP = 'RolConnect';
+export const AGENT_GROUP = 'Rold Harness';
 export async function addToAgentGroup(tabId, ctx) {
   ctx?.run?.agentTabs?.add(tabId);
   if (!chrome.tabs.group || !chrome.tabGroups) return;
@@ -88,7 +88,7 @@ function readPage(maxLen, docArg) {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   const total = text.length;
-  if (total > maxLen) text = text.slice(0, maxLen) + `\n\n…[truncated — ${total} characters total]`;
+  if (total > maxLen) text = text.slice(0, maxLen) + `\n\n[truncated, ${total} characters total]`;
   return { title, url, text };
 }
 
@@ -98,7 +98,7 @@ function collectElements(limit) {
     '[role=button]', '[role=link]', '[role=tab]', '[role=menuitem]', '[role=checkbox]',
     '[role=option]', '[role=textbox]', '[role=combobox]', '[contenteditable="true"]',
   ].join(',');
-  document.querySelectorAll('[data-rolconnect-id]').forEach((e) => e.removeAttribute('data-rolconnect-id'));
+  document.querySelectorAll('[data-rold-harness-id]').forEach((e) => e.removeAttribute('data-rold-harness-id'));
   const out = [];
   let id = 0;
   for (const el of document.querySelectorAll(sel)) {
@@ -112,7 +112,7 @@ function collectElements(limit) {
     const tag = el.tagName.toLowerCase();
     const type = tag === 'input' ? el.type : '';
     id++;
-    el.setAttribute('data-rolconnect-id', String(id));
+    el.setAttribute('data-rold-harness-id', String(id));
     const inView = r.bottom > 0 && r.top < innerHeight;
     let line = `[${id}] ${tag}${type ? `(${type})` : ''} "${label}"`;
     if (tag === 'a' && el.href) line += ` -> ${el.href.slice(0, 120)}`;
@@ -125,7 +125,7 @@ function collectElements(limit) {
 
 // id == null describes the focused element.
 function describeElement(id) {
-  const el = id == null ? document.activeElement : document.querySelector(`[data-rolconnect-id="${id}"]`);
+  const el = id == null ? document.activeElement : document.querySelector(`[data-rold-harness-id="${id}"]`);
   if (!el || el === document.body) return null;
   const raw = el.getAttribute('aria-label') || el.innerText || el.value || el.getAttribute('placeholder') || el.getAttribute('name') || '';
   const isSearch = (e) =>
@@ -144,8 +144,8 @@ function describeElement(id) {
 }
 
 function pressKey(id, key) {
-  const el = id == null ? document.activeElement || document.body : document.querySelector(`[data-rolconnect-id="${id}"]`);
-  if (!el) return { ok: false, error: 'Element not found — call get_page_elements again.' };
+  const el = id == null ? document.activeElement || document.body : document.querySelector(`[data-rold-harness-id="${id}"]`);
+  if (!el) return { ok: false, error: 'Element not found. Call get_page_elements again.' };
   if (id != null) { el.scrollIntoView({ block: 'center' }); el.focus?.(); }
   const codes = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, ' ': 32, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, PageUp: 33, PageDown: 34, Home: 36, End: 35 };
   const opts = { key, code: key === ' ' ? 'Space' : key, keyCode: codes[key] || 0, which: codes[key] || 0, bubbles: true, cancelable: true };
@@ -165,8 +165,8 @@ function pressKey(id, key) {
 }
 
 function clickElement(id) {
-  const el = document.querySelector(`[data-rolconnect-id="${id}"]`);
-  if (!el) return { ok: false, error: 'Element not found — call get_page_elements again (the page may have changed).' };
+  const el = document.querySelector(`[data-rold-harness-id="${id}"]`);
+  if (!el) return { ok: false, error: 'Element not found. Call get_page_elements again (the page may have changed).' };
   el.scrollIntoView({ block: 'center', inline: 'center' });
   if (el.focus) el.focus();
   el.click();
@@ -174,8 +174,8 @@ function clickElement(id) {
 }
 
 function typeIntoElement(id, text, submit) {
-  const el = document.querySelector(`[data-rolconnect-id="${id}"]`);
-  if (!el) return { ok: false, error: 'Element not found — call get_page_elements again.' };
+  const el = document.querySelector(`[data-rold-harness-id="${id}"]`);
+  if (!el) return { ok: false, error: 'Element not found. Call get_page_elements again.' };
   if (el.type === 'password') return { ok: false, error: 'Typing into password fields is not allowed. Ask the user to do it.' };
   el.scrollIntoView({ block: 'center' });
   el.focus();
@@ -425,7 +425,7 @@ if (chrome.debugger?.onDetach) {
 const cdp = (tabId, method, params = {}) => chrome.debugger.sendCommand({ tabId }, method, params);
 
 async function attachTab(tab, ctx) {
-  if (!chrome.debugger) throw new Error('Computer use needs the "debugger" permission. Reload RolConnect in edge://extensions.');
+  if (!chrome.debugger) throw new Error('Computer use needs the "debugger" permission. Reload Rold Harness in edge://extensions.');
   if (!isWebUrl(tab.url)) throw new Error("Can't control this tab. Browser-internal pages and the add-ons store are off limits.");
   if (stopped.has(tab.id)) throw new Error('The user stopped screen control on this tab. Use get_page_elements and the element tools instead.');
   const users = attached.get(tab.id);
@@ -721,7 +721,7 @@ export const TOOLS = [
     name: 'browser_info',
     kind: 'read',
     description:
-      'Get the installed RolConnect version, browser version, platform and current tab. Use this for questions about the installed build or the browser. Extensions cannot read browser-internal pages such as edge://extensions.',
+      'Get the installed Rold Harness version, browser version, platform and current tab. Use this for questions about the installed build or the browser. Extensions cannot read browser-internal pages such as edge://extensions.',
     parameters: obj({}),
     label: () => 'Checking browser info',
     async run() {
@@ -734,11 +734,11 @@ export const TOOLS = [
       const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       return {
         content:
-          `Installed build: RolConnect ${m.version} (extension id ${chrome.runtime.id})\n` +
+          `Installed build: Rold Harness ${m.version} (extension id ${chrome.runtime.id})\n` +
           `Browser: ${browser}\nPlatform: ${platform}\n` +
-          `Current tab: ${active ? `${active.title} — ${active.url}` : 'none'}\n\n` +
+          `Current tab: ${active ? `${active.title} (${active.url})` : 'none'}\n\n` +
           "This comes from the browser's extension APIs. Browser-internal pages (edge://, chrome://) and the add-ons store can't be read or controlled by extensions.",
-        detail: `RolConnect ${m.version}`,
+        detail: `Rold Harness ${m.version}`,
       };
     },
   },
@@ -765,7 +765,7 @@ export const TOOLS = [
             content:
               header +
               'This is a browser-internal page. Edge blocks extensions from reading it directly, and the screenshot fallback was not allowed. ' +
-              'Open the RolConnect side panel while this page is in front (click the RolConnect toolbar button, or right-click → Summarize this page with RolConnect), then ask again. ' +
+              'Open the Rold Harness side panel while this page is in front (click the Rold Harness toolbar button, or right-click → Summarize this page with Rold Harness), then ask again. ' +
               `(Capture failed: ${shot.error})`,
             detail: tab.title,
           };
@@ -791,14 +791,14 @@ export const TOOLS = [
     name: 'open_tab',
     kind: 'tab',
     browserControl: true,
-    description: 'Open a URL in a new tab in your "RolConnect" tab group and wait for it to load. Returns the new tab id. Opens in the background unless active=true.',
+    description: 'Open a URL in a new tab in your "Rold Harness" tab group and wait for it to load. Returns the new tab id. Opens in the background unless active=true.',
     parameters: obj({ url: str('Absolute http(s) URL.'), active: { type: 'boolean', description: 'Switch to the tab (default false).' } }, ['url']),
     label: (a) => `Opening ${host(a.url)}`,
     async run({ url, active }, ctx) {
       const tab = await openAgentTab(normalizeUrl(url), ctx, !!active);
       await waitForTab(tab.id);
       const t = await chrome.tabs.get(tab.id);
-      return { content: `Opened tab id=${t.id}: ${t.title} — ${t.url}` };
+      return { content: `Opened tab id=${t.id}: ${t.title} (${t.url})` };
     },
   },
   {
@@ -816,7 +816,7 @@ export const TOOLS = [
       await sleep(400);
       await waitForTab(tab.id);
       const t = await chrome.tabs.get(tab.id);
-      return { content: `Tab id=${t.id} is now at: ${t.title} — ${t.url}` };
+      return { content: `Tab id=${t.id} is now at: ${t.title} (${t.url})` };
     },
   },
   {
@@ -846,7 +846,7 @@ export const TOOLS = [
     async run({ tab_id, element_id, consequential }, ctx) {
       const tab = await targetTab(tab_id);
       const d = await inject(tab.id, describeElement, [element_id]);
-      if (!d) return { content: 'Element not found — call get_page_elements again.', isError: true };
+      if (!d) return { content: 'Element not found. Call get_page_elements again.', isError: true };
       const crucial = !!consequential || (!d.search && (d.submit || CRUCIAL.test(d.label)));
       const ok = await approve(ctx, `Click ${d.tag} “${d.label || '(no label)'}” on ${host(tab.url)}`, crucial);
       if (!ok) return { content: 'The user did not approve this click. Do not retry it; ask them how to proceed.', isError: true };
@@ -855,7 +855,7 @@ export const TOOLS = [
       await sleep(1200);
       await waitForTab(tab.id, 10000);
       const t = await chrome.tabs.get(tab.id);
-      return { content: `Clicked. Tab is now: ${t.title} — ${t.url}`, detail: d.label };
+      return { content: `Clicked. Tab is now: ${t.title} (${t.url})`, detail: d.label };
     },
   },
   {
@@ -877,7 +877,7 @@ export const TOOLS = [
     async run({ tab_id, element_id, text, submit, consequential }, ctx) {
       const tab = await targetTab(tab_id);
       const d = await inject(tab.id, describeElement, [element_id]);
-      if (!d) return { content: 'Element not found — call get_page_elements again.', isError: true };
+      if (!d) return { content: 'Element not found. Call get_page_elements again.', isError: true };
       if (d.password) return { content: 'Refused: that looks like a password, one-time code or payment field. Ask the user to fill it in.', isError: true };
       const crucial = !!consequential || (!!submit && !d.search);
       const ok = await approve(ctx, `Type “${text}” into “${d.label || d.tag}”${submit ? ' and submit' : ''} on ${host(tab.url)}`, crucial);
@@ -886,7 +886,7 @@ export const TOOLS = [
       if (!r?.ok) return { content: r?.error || 'Typing failed.', isError: true };
       if (submit) { await sleep(1200); await waitForTab(tab.id, 10000); }
       const t = await chrome.tabs.get(tab.id);
-      return { content: `Done. Tab is now: ${t.title} — ${t.url}` };
+      return { content: `Done. Tab is now: ${t.title} (${t.url})` };
     },
   },
   {
@@ -931,7 +931,7 @@ export const TOOLS = [
       await sleep(k === 'Enter' ? 1200 : 300);
       if (k === 'Enter') await waitForTab(tab.id, 10000);
       const t = await chrome.tabs.get(tab.id);
-      return { content: `Pressed ${key}. Tab is now: ${t.title} — ${t.url}` };
+      return { content: `Pressed ${key}. Tab is now: ${t.title} (${t.url})` };
     },
   },
   {
@@ -1189,7 +1189,7 @@ export const TOOLS = [
       const schedule = normalizeSchedule({ type: a.schedule, time: a.time, day: a.weekday, minutes: a.interval_minutes });
       const heartbeat = !!a.continue_this_chat && !!ctx.chatId;
       const desc = `${describeSchedule(schedule)}${heartbeat ? ', continuing this chat' : ''}`;
-      const ok = await ctx.confirm(`Create routine “${a.name}” — ${desc}`);
+      const ok = await ctx.confirm(`Create routine “${a.name}”: ${desc}`);
       if (!ok) return { content: 'The user declined to create this routine.', isError: true };
       const r = {
         id: uid('r'), name: String(a.name).slice(0, 80), instructions: String(a.instructions),

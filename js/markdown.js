@@ -33,7 +33,7 @@ export function inline(src) {
   });
   s = s.replace(/(^|[\s(])(https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"\]])/g, (m, pre, u) => {
     const h = safeUrl(u);
-    return h ? pre + put(link(h, esc(u.length > 60 ? u.slice(0, 57) + '…' : u))) : m;
+    return h ? pre + put(link(h, esc(u.replace(/^https?:\/\/(www\.)?/, '')))) : m;
   });
   return basic(s).replace(/\u0000(\d+)\u0000/g, (m, i) => toks[+i]);
 }

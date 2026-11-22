@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src=".github/assets/banner.svg" alt="RolConnect: your new tab is an AI agent" width="100%">
+<img src=".github/assets/banner.svg" alt="Rold Harness: your new tab is an AI agent" width="100%">
 
 <br>
 
@@ -13,13 +13,13 @@ An AI chat on every new tab that is also a browsing agent. It searches the web, 
 </div>
 
 <p align="center">
-  <img src=".github/assets/agent.png" alt="RolConnect replying to an email: it opened the inbox, found Ana's email, typed the reply and is waiting for approval before clicking Send." width="100%">
+  <img src=".github/assets/agent.png" alt="Rold Harness replying to an email: it opened the inbox, found Ana's email, typed the reply and is waiting for approval before clicking Send." width="100%">
 </p>
 
 ## Features
 
 ### 🧭 An agent that uses your browser
-Ask for something and it does the steps: searches, reads pages, opens tabs, clicks buttons, fills in forms and presses keys. You see every step as it happens. The tabs it opens go into their own purple **RolConnect** tab group, so they never get mixed up with yours.
+Ask for something and it does the steps: searches, reads pages, opens tabs, clicks buttons, fills in forms and presses keys. You see every step as it happens. The tabs it opens go into their own purple **Rold Harness** tab group, so they never get mixed up with yours.
 
 ### 🖱️ Sees and uses any page
 With **Computer use** on (Settings → Agent), it takes screenshots of tabs and uses a real mouse and keyboard, so it works with anything on screen: canvas apps, maps, editors, drag and drop. It works in background tabs without switching away from what you're doing. While it does, Edge shows a *"started debugging this browser"* bar, which goes away when the task ends; clicking **Cancel** on it stops screen control. With models that can't see images, it falls back to reading the page.
@@ -48,7 +48,7 @@ It remembers what matters about you (where you live, how you like answers, who's
 Tasks that run on their own: every few minutes, daily, on weekdays or weekly. They run in the background and send a notification with the result. A routine can start a new chat each time or keep adding to an existing one, and you can ask the agent to set one up for you.
 
 ### 🪟 Side panel
-The same chat next to whatever page you're on (**Ctrl+Shift+Y**). It knows which page you're looking at, so *"summarize this"* just works. You can also right-click any page or selection → **Ask RolConnect**.
+The same chat next to whatever page you're on (**Ctrl+Shift+Y**). It knows which page you're looking at, so *"summarize this"* just works. You can also right-click any page or selection → **Ask Rold Harness**.
 
 <table>
   <tr>
@@ -63,11 +63,11 @@ The same chat next to whatever page you're on (**Ctrl+Shift+Y**). It knows which
 
 1. Download this repo (**Code → Download ZIP**) and extract it, or `git clone` it.
 2. Open `edge://extensions` and turn on **Developer mode**.
-3. Click **Load unpacked** and pick the `RolConnect` folder (the one with `manifest.json`).
+3. Click **Load unpacked** and pick the `RoldHarness` folder (the one with `manifest.json`).
 4. Open a new tab. When Edge asks about the changed new tab page, choose **Keep changes**.
 5. Settings opens by itself: paste an OpenCode key, then pick a model.
 
-To update, pull or download the new version and click **↻** on RolConnect in `edge://extensions`.
+To update, pull or download the new version and click **↻** on Rold Harness in `edge://extensions`.
 
 ## Accounts
 
@@ -90,7 +90,7 @@ Models load as soon as you paste a key. Under the chat box you can switch provid
 | `web_search` | Search the web |
 | `read_url` | Read any page (falls back to a background tab for sites that need JavaScript) |
 | `list_tabs`, `read_tab` | See your open tabs and read them, including pages you're logged into |
-| `browser_info` | Installed RolConnect and browser version, platform and current tab |
+| `browser_info` | Installed Rold Harness and browser version, platform and current tab |
 | `open_tab`, `navigate_tab`, `scroll_page`, `close_tab` | Drive tabs |
 | `get_page_elements`, `click_element`, `type_text`, `press_key`, `wait` | Use pages: buttons, links, forms, menus |
 | `screenshot` | See a tab, including background tabs |
@@ -103,7 +103,7 @@ Models load as soon as you paste a key. Under the chat box you can switch provid
 </details>
 
 > [!NOTE]
-> Edge doesn't let extensions read or control browser-internal pages (`edge://`, `chrome://`) directly. Open RolConnect's side panel on one of those pages (toolbar button, or right-click → **Summarize this page with RolConnect**) and `read_tab` can capture the visible area and read it from the screenshot with a vision-capable model. For build and browser details, `browser_info` is faster.
+> Edge doesn't let extensions read or control browser-internal pages (`edge://`, `chrome://`) directly. Open Rold Harness's side panel on one of those pages (toolbar button, or right-click → **Summarize this page with Rold Harness**) and `read_tab` can capture the visible area and read it from the screenshot with a vision-capable model. For build and browser details, `browser_info` is faster.
 
 ## Privacy
 

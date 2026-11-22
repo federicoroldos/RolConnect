@@ -24,9 +24,9 @@ async function main() {
   try {
     if (!routine) throw new Error('This routine no longer exists.');
     document.getElementById('name').textContent = routine.name;
-    document.title = `${routine.name} · RolConnect`;
+    document.title = `${routine.name}`;
     const settings = await getSettings();
-    if (!isConfigured(settings)) throw new Error('No account is connected in RolConnect.');
+    if (!isConfigured(settings)) throw new Error('No account is connected in Rold Harness.');
 
     const chats = await getChats();
     if (routine.kind === 'heartbeat') {
@@ -60,7 +60,7 @@ async function main() {
       },
     };
     const memories = settings.memory?.enabled ? await getMemories(settings) : [];
-    setStatus('Working…');
+    setStatus('Working');
     const out = await runAgent({
       settings, history, userText: text, ui, signal: ac.signal,
       mode: 'routine', pageInfo: null, sessionId: chat.id, memories, headless: true,
@@ -94,7 +94,7 @@ async function main() {
     await chrome.storage.session.set({ routineRuns });
 
     notify(routine, chat, am, result);
-    setStatus(result.status === 'error' ? `Failed: ${result.note}` : 'Done.');
+    setStatus(result.status === 'error' ? `Failed: ${result.note}` : 'Done');
     setTimeout(() => (me ? chrome.tabs.remove(me.id).catch(() => window.close()) : window.close()), 1500);
   }
 }
@@ -105,7 +105,7 @@ function notify(routine, chat, am, result) {
     result.status === 'error' ? `Failed: ${result.note}` :
     (result.status === 'needs approval' ? 'Waiting for your approval. ' : '') +
       String(am?.text || '').replace(/[#*_`>\[\]]/g, '').replace(/\(https?:[^)]*\)/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
-  chrome.notifications.create(`rolconnect-chat:${chat?.id || ''}:${Date.now()}`, {
+  chrome.notifications.create(`rold-harness-chat:${chat?.id || ''}:${Date.now()}`, {
     type: 'basic',
     iconUrl: chrome.runtime.getURL('icons/icon128.png'),
     title: routine.name,

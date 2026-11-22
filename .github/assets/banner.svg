@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" role="img" aria-labelledby="t d">
-  <title id="t">RolConnect</title>
-  <desc id="d">The RolConnect logo and name beside a card where the agent works through a task and asks for approval before sending.</desc>
+  <title id="t">Rold Harness</title>
+  <desc id="d">The Rold Harness logo and name beside a card where the agent works through a task and asks for approval before sending.</desc>
   <defs>
     <clipPath id="frame"><rect width="1280" height="420" rx="20"/></clipPath>
     <linearGradient id="logo" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b7bff"/><stop offset="1" stop-color="#ff8a5c"/></linearGradient>
@@ -22,7 +22,7 @@
       <rect width="92" height="92" rx="26" fill="url(#logo)"/>
       <path transform="scale(2.875)" d="M16 6.5c.9 4.8 3.7 7.6 8.5 8.5-4.8.9-7.6 3.7-8.5 8.5-.9-4.8-3.7-7.6-8.5-8.5 4.8-.9 7.6-3.7 8.5-8.5z" fill="#fff"/>
     </g>
-    <text class="f" x="92" y="282" font-size="84" font-weight="700" fill="#f4f2ee" letter-spacing="-2">RolConnect</text>
+    <text class="f" x="92" y="282" font-size="84" font-weight="700" fill="#f4f2ee" letter-spacing="-2">Rold Harness</text>
     <text class="f" x="96" y="330" font-size="28" fill="#b9b6ae">Your new tab is an AI agent.</text>
 
     <!-- Provider chips -->

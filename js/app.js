@@ -16,7 +16,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 // Icons (inline SVG, stroke = currentColor)
 
 const ic = (d, extra = '') =>
-  `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
+  `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${d}</svg>`;
 const ICONS = {
   search: ic('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   read: ic('<path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M14 3v5h5M8 13h8M8 17h5"/>'),
@@ -49,11 +49,17 @@ const ICONS = {
   memory: ic('<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a2 2 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/>'),
   routine: ic('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
   wait: ic('<path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9"/>'),
+  sliders: ic('<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>'),
+  chip: ic('<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>'),
+  compose: ic('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'),
+  globe: ic('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
+  alert: ic('<circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.01"/>'),
+  display: ic('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
+  spinner: ic('<path d="M12 3a9 9 0 1 0 9 9"/>', 'class="spin"'),
 };
 ICONS.clock = ICONS.routine;
 
-const PERMISSIONS = { read: 'Read only', guard: 'Guard', full: 'Full access' };
-const LOGO = `<svg viewBox="0 0 32 32" width="22" height="22"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b7bff"/><stop offset="1" stop-color="#ff8a5c"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg)"/><path d="M16 6.5c.9 4.8 3.7 7.6 8.5 8.5-4.8.9-7.6 3.7-8.5 8.5-.9-4.8-3.7-7.6-8.5-8.5 4.8-.9 7.6-3.7 8.5-8.5z" fill="#fff"/></svg>`;
+const PERMISSIONS = { read: 'Read only', guard: 'Ask before acting', full: 'Full access' };
 
 // ---------------------------------------------------------------------------
 // State
@@ -79,29 +85,32 @@ let pageInfo = null;
 // ---------------------------------------------------------------------------
 // Shell
 
-const PLACEHOLDER = MODE === 'side' ? 'Ask about this page or anything…' : 'Ask anything, search the web, or enter a URL…';
+const PLACEHOLDER = MODE === 'side' ? 'Ask about this page or anything' : 'Ask anything, search the web, or enter a URL';
 
 function shell() {
   $('#root').innerHTML = `
   <div class="app ${MODE}">
     <aside class="sidebar" id="sidebar">
       <div class="sb-head">
-        <div class="brand">${LOGO}<span>RolConnect</span></div>
+        <span class="brand">Rold Harness</span>
         <button class="icon-btn" id="collapseSidebar" title="Hide sidebar">${ICONS.sidebar}</button>
       </div>
-      <button class="new-chat" id="newChat">${ICONS.plus}<span>New chat</span></button>
+      <nav class="sb-nav">
+        <button class="row-btn strong" id="newChat">${ICONS.compose}<span>New chat</span></button>
+        <button class="row-btn" id="searchChats">${ICONS.search}<span>Search</span></button>
+        <label class="sb-search" id="searchRow" hidden>${ICONS.search}<input id="chatSearch" placeholder="Search chats" autocomplete="off" spellcheck="false"></label>
+        <button class="row-btn" id="openRoutines">${ICONS.routine}<span>Routines</span></button>
+      </nav>
       <div class="chat-list" id="chatList"></div>
-      <div class="sb-foot">
-        <button class="sb-link" id="openSettings">${ICONS.gear}<span>Settings</span></button>
-      </div>
+      <button class="row-btn" id="openSettings">${ICONS.sliders}<span>Settings</span></button>
     </aside>
     <div class="scrim" id="scrim"></div>
     <main class="main is-empty" id="main">
       <header class="topbar">
         <button class="icon-btn" id="showSidebar" title="Chats">${MODE === 'side' ? ICONS.menu : ICONS.sidebar}</button>
         <div class="topbar-title" id="topTitle"></div>
-        <button class="icon-btn" id="topNew" title="New chat">${ICONS.plus}</button>
-        <button class="icon-btn" id="topSettings" title="Settings">${ICONS.gear}</button>
+        <button class="icon-btn" id="topNew" title="New chat">${ICONS.compose}</button>
+        <button class="icon-btn" id="topSettings" title="Settings">${ICONS.sliders}</button>
       </header>
       <div class="scroller" id="scroller">
         <section class="hero" id="hero">
@@ -115,20 +124,20 @@ function shell() {
           <div class="queue-row" id="queueRow"></div>
           <textarea id="input" rows="1" placeholder="${PLACEHOLDER}" autocomplete="off"></textarea>
           <div class="composer-bar">
-            <div class="model-wrap">
-              <button type="button" class="model-pill" id="modelPill"></button>
+            <div class="tool-wrap">
+              <button type="button" class="tool-btn" id="modelPill" title="Model"></button>
               <div class="popover" id="modelMenu" hidden></div>
             </div>
-            <div class="model-wrap" id="effortWrap" hidden>
-              <button type="button" class="model-pill effort-pill" id="effortPill" title="Thinking effort"></button>
+            <div class="tool-wrap" id="effortWrap" hidden>
+              <button type="button" class="tool-btn" id="effortPill"></button>
               <div class="popover effort-menu" id="effortMenu" hidden></div>
             </div>
-            <div class="model-wrap">
-              <button type="button" class="model-pill perm-pill" id="permPill" title="Permissions"></button>
+            <div class="tool-wrap">
+              <button type="button" class="tool-btn" id="permPill"></button>
               <div class="popover perm-menu" id="permMenu" hidden></div>
             </div>
             <span class="spacer"></span>
-            <button type="button" class="pause-btn" id="pauseBtn" title="Pause and take over" hidden>${ICONS.pause}</button>
+            <button type="button" class="icon-btn" id="pauseBtn" title="Pause and take over" hidden>${ICONS.pause}</button>
             <button type="submit" class="send-btn" id="sendBtn" title="Send (Enter)">${ICONS.send}</button>
           </div>
         </form>
@@ -171,20 +180,25 @@ function toast(msg) {
 
 function tickClock() {
   const h = new Date().getHours();
-  const part = h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-  $('#greeting').textContent = MODE === 'side' ? 'What can I help with on this page?' : `${part}. What are we looking into?`;
+  const part = h < 5 ? 'tonight' : h < 12 ? 'this morning' : h < 18 ? 'this afternoon' : 'tonight';
+  $('#greeting').textContent = MODE === 'side' ? 'What can I help with on this page?' : `What are we looking into ${part}?`;
 }
 
 // ---------------------------------------------------------------------------
 // Sidebar / chats
 
+let chatFilter = '';
+
 function renderChatList() {
-  const list = Object.values(chats).sort((a, b) => b.updated - a.updated);
+  const q = chatFilter.trim().toLowerCase();
+  const list = Object.values(chats)
+    .filter((c) => !q || (c.title || 'New chat').toLowerCase().includes(q))
+    .sort((a, b) => b.updated - a.updated);
   const groups = {};
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   for (const c of list) {
-    const g = c.updated >= startOfDay ? 'Today' : c.updated >= startOfDay - 86400000 ? 'Yesterday' : c.updated >= startOfDay - 7 * 86400000 ? 'Previous 7 days' : 'Older';
+    const g = c.updated >= startOfDay ? 'Today' : c.updated >= startOfDay - 86400000 ? 'Yesterday' : c.updated >= startOfDay - 7 * 86400000 ? 'Last 7 days' : 'Older';
     (groups[g] ||= []).push(c);
   }
   $('#chatList').innerHTML = list.length
@@ -193,14 +207,14 @@ function renderChatList() {
           .map((c) => `<div class="cl-item ${chat?.id === c.id ? 'active' : ''}" data-id="${c.id}">${chatBadge(c)}<span>${esc(c.title || 'New chat')}</span><button class="cl-del" data-del="${c.id}" title="Delete">${ICONS.trash}</button></div>`)
           .join(''))
         .join('')
-    : '<div class="cl-empty">Your chats will show up here.</div>';
+    : `<div class="cl-empty">${q ? 'No chats match.' : 'Your chats will show up here.'}</div>`;
 }
 
 function chatBadge(c) {
   const r = runs.get(c.id);
-  if (r?.confirm) return `<span class="cl-ic warn" title="Waiting for your approval">${ICONS.approval}</span>`;
-  if (r) return `<span class="cl-ic" title="Working"><span class="spinner"></span></span>`;
-  return c.routineId ? `<span class="cl-ic" title="Routine">${ICONS.routine}</span>` : '';
+  if (r?.confirm) return `<span class="cl-ic warn" title="Waiting for your approval">${ICONS.shield}</span>`;
+  if (r) return `<span class="cl-ic" title="Working">${ICONS.spinner}</span>`;
+  return c.routineId ? `<span class="cl-ic" title="Routine">${ICONS.routine}</span>` : '<span class="cl-ic"></span>';
 }
 
 function showChat(c) {
@@ -232,27 +246,38 @@ function closeSidebarOverlay() {
 function stepSummary(steps) {
   const n = (k) => steps.filter((s) => s.kind === k).length;
   const parts = [];
-  if (n('search')) parts.push(`Searched ${n('search')}×`);
-  if (n('read')) parts.push(`read ${n('read')} page${n('read') > 1 ? 's' : ''}`);
+  const plural = (k, one, many) => (n(k) === 1 ? one : many.replace('#', n(k)));
+  if (n('search')) parts.push(plural('search', 'Searched once', 'Searched # times'));
+  if (n('read')) parts.push(plural('read', 'read 1 page', 'read # pages'));
   const acts = n('tab') + n('click') + n('type') + n('wait') + n('screen');
   if (acts) parts.push(`${acts} browser action${acts > 1 ? 's' : ''}`);
   if (n('memory')) parts.push('updated memory');
   if (n('routine')) parts.push('scheduled a routine');
-  return parts.join(', ') || `${steps.length} step${steps.length > 1 ? 's' : ''}`;
+  const text = parts.join(', ') || `${steps.length} step${steps.length > 1 ? 's' : ''}`;
+  return text[0].toUpperCase() + text.slice(1);
 }
 
-function renderSteps(m, idx) {
+// "0:07" from the start of the answer; long runs read "12:04".
+function clock(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+function duration(ms) {
+  const s = Math.max(1, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+function renderSteps(m) {
   if (!m.steps?.length) return '';
   const running = m.status === 'running';
-  const paused = running && run?.idx === idx && run.paused;
-  const state = paused ? 'Paused' : m.waiting ? 'Waiting for your approval' : 'Working…';
-  const icon = paused ? ICONS.pause : m.waiting ? ICONS.approval : '<span class="spinner"></span>';
-  return `<details class="activity" ${running || m.showSteps ? 'open' : ''}>
-    <summary>${running ? icon : ICONS.check}<span>${running ? state : esc(stepSummary(m.steps))}</span>${ICONS.chevron}</summary>
+  const took = !running && m.doneAt && m.ts ? ` in ${duration(m.doneAt - m.ts)}` : '';
+  return `<details class="activity ${running ? 'live' : ''}" ${running || m.showSteps ? 'open' : ''}>
+    <summary>${ICONS.check}<span>${esc(stepSummary(m.steps) + took)}</span><span class="chev">${ICONS.chevron}</span></summary>
     <ol class="steps">${m.steps
       .map((s) => `<li class="step ${s.status} k-${s.kind}">
-        <span class="step-ic">${s.status === 'running' ? '<span class="spinner"></span>' : s.status === 'error' ? ICONS.x : ICONS[s.kind] || ICONS.think}</span>
+        <span class="step-ic">${s.status === 'running' ? ICONS.spinner : s.status === 'error' ? ICONS.x : ICONS[s.kind] || ICONS.think}</span>
         <span class="step-body"><span class="step-label">${esc(s.kind === 'think' ? s.label.slice(0, 400) : s.label)}</span>${s.detail ? `<span class="step-detail">${esc(String(s.detail).slice(0, 200))}</span>` : ''}</span>
+        ${s.at && m.ts ? `<span class="step-time">${clock(s.at - m.ts)}</span>` : ''}
       </li>`)
       .join('')}</ol>
   </details>`;
@@ -260,39 +285,42 @@ function renderSteps(m, idx) {
 
 function renderSources(m) {
   if (!m.sources?.length) return '';
-  const shown = m.sources.slice(0, 8);
-  return `<div class="sources">${shown
-    .map((s) => `<a class="source" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" title="${esc(s.title || s.url)}">
-      <img src="${esc(favicon(s.url))}" alt="" width="14" height="14"><span>${esc(hostOf(s.url))}</span></a>`)
-    .join('')}${m.sources.length > shown.length ? `<span class="source more">+${m.sources.length - shown.length}</span>` : ''}</div>`;
+  const shown = m.sources.slice(0, 6);
+  return `<div class="sources"><div class="sources-title">Sources</div>${shown
+    .map((s) => `<a class="source" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" title="${esc(s.url)}">
+      <img src="${esc(favicon(s.url))}" alt="" width="16" height="16"><span>${esc(s.title && s.title !== s.url ? s.title : hostOf(s.url))}</span></a>`)
+    .join('')}${m.sources.length > shown.length ? `<span class="source more">${m.sources.length - shown.length} more</span>` : ''}</div>`;
+}
+
+function notice(icon, title, text, buttons = '', cls = '') {
+  return `<div class="notice ${cls}">${icon}<div class="notice-text"><strong>${title}</strong>${text ? `<span>${esc(text)}</span>` : ''}</div>${buttons ? `<div class="notice-btns">${buttons}</div>` : ''}</div>`;
 }
 
 function messageHTML(m, idx) {
   if (m.role === 'user') {
-    return `<div class="msg user" data-idx="${idx}"><div class="bubble">${esc(m.text)}</div></div>`;
+    return `<div class="msg user prompt" data-idx="${idx}">${esc(m.text)}</div>`;
   }
-  const meta = m.provider ? `${PROVIDERS[m.provider]?.label || m.provider} · ${m.model}` : '';
+  const paused = m.status === 'running' && run?.idx === idx && run.paused;
   const body = m.error
-    ? `<div class="error-card"><strong>Something went wrong.</strong><div>${esc(m.error)}</div></div>`
+    ? notice(ICONS.alert, 'Something went wrong', m.error, '', 'err')
     : m.text
       ? `<div class="md">${renderMarkdown(m.text)}</div>`
-      : m.status === 'running' && !m.steps?.length
-        ? '<div class="typing"><span></span><span></span><span></span></div>'
+      : m.status === 'running' && !m.steps?.length && !paused
+        ? `<div class="working">${ICONS.spinner}<span>Working</span></div>`
         : '';
-  const paused = m.status === 'running' && run?.idx === idx && run.paused;
+  const confirming = run?.idx === idx && run.confirm;
   return `<div class="msg assistant ${m.status === 'running' ? 'running' : ''}" data-idx="${idx}">
-    <div class="avatar">${LOGO}</div>
     <div class="msg-main">
-      ${renderSteps(m, idx)}
-      ${paused ? `<div class="paused-card">${ICONS.pause}<span>${esc(run.pauseReason)}</span><button type="button" class="btn primary small act" data-act="resume">${ICONS.play}Resume</button></div>` : ''}
+      ${renderSteps(m)}
+      ${paused ? notice(ICONS.pause, 'Paused', run.pauseReason, `<button type="button" class="btn primary small act" data-act="resume">${ICONS.play}Resume</button>`) : ''}
       ${renderSources(m)}
       ${body}
-      <div class="confirm-slot">${run?.idx === idx && run.confirm ? `<div class="confirm-card"><div class="cc-text"><strong>Approve this action?</strong><span>${esc(run.confirm.text)}</span></div>
-        <div class="cc-btns"><button type="button" class="btn ghost" data-v="0">Deny</button><button type="button" class="btn primary" data-v="1">Approve</button></div></div>` : ''}</div>
+      <div class="confirm-slot">${confirming ? notice(ICONS.shield, 'Approve this action?', run.confirm.text,
+        '<button type="button" class="btn" data-v="0">Deny</button><button type="button" class="btn primary" data-v="1">Approve</button>', 'confirm-card') : ''}</div>
       ${m.status !== 'running' ? `<div class="msg-actions">
         ${m.text ? `<button class="act" data-act="copy" title="Copy">${ICONS.copy}</button>` : ''}
         <button class="act" data-act="retry" title="Regenerate">${ICONS.retry}</button>
-        <span class="meta">${esc(meta)}</span>
+        <span class="meta" title="${esc(PROVIDERS[m.provider]?.label || '')}">${esc(m.model || '')}</span>
       </div>` : ''}
     </div>
   </div>`;
@@ -302,7 +330,7 @@ function renderThread() {
   const msgs = chat?.messages || [];
   $('#main').classList.toggle('is-empty', !msgs.length);
   $('#thread').innerHTML = msgs.map(messageHTML).join('');
-  $('#topTitle').textContent = chat?.title || (MODE === 'side' ? 'RolConnect' : '');
+  $('#topTitle').textContent = chat?.title || (MODE === 'side' ? 'Rold Harness' : '');
   scrollToBottom(true);
 }
 
@@ -324,7 +352,8 @@ function renderModelPill() {
   const p = PROVIDERS[key];
   const model = settings.providers[key].model || 'no model';
   const ok = isConfigured(settings);
-  $('#modelPill').innerHTML = `<span class="dot" style="background:${p.color}"></span><span class="pill-provider">${p.label}</span><span class="pill-model">${esc(model)}</span>${ok ? '' : '<span class="pill-warn">sign in</span>'}${ICONS.chevron}`;
+  $('#modelPill').innerHTML = `${ICONS.chip}<span class="t-main">${esc(model)}</span><span class="t-sub">${p.label}</span>${ok ? '' : '<span class="t-warn">Sign in</span>'}`;
+  $('#modelPill').title = `Model: ${model} on ${p.label}`;
   renderEffortPill();
 }
 
@@ -338,13 +367,15 @@ function renderEffortPill() {
   const opts = currentEffortOptions();
   $('#effortWrap').hidden = !opts.length || !isConfigured(settings);
   const cur = pickEffort(chosenEffort(settings), opts) || 'default';
-  $('#effortPill').innerHTML = `${ICONS.gauge}<span class="pill-provider">Effort</span><span class="pill-model">${EFFORT_LABEL[cur] || cur}</span>${ICONS.chevron}`;
+  $('#effortPill').innerHTML = `${ICONS.gauge}<span class="t-label">${EFFORT_LABEL[cur] || cur}</span>`;
+  $('#effortPill').title = `Thinking effort: ${EFFORT_LABEL[cur] || cur}`;
   renderPermPill();
 }
 
 function renderPermPill() {
   const p = settings.permission in PERMISSIONS ? settings.permission : 'guard';
-  $('#permPill').innerHTML = `${ICONS.shield}<span class="pill-model">${PERMISSIONS[p]}</span>${ICONS.chevron}`;
+  $('#permPill').innerHTML = `${ICONS.shield}<span class="t-label">${PERMISSIONS[p]}</span>`;
+  $('#permPill').title = `Permissions: ${PERMISSIONS[p]}`;
   $('#permPill').dataset.level = p;
 }
 
@@ -397,7 +428,6 @@ function renderModelMenu() {
       const cfg = settings.providers[key];
       const ok = isConfigured(settings, key);
       return `<button type="button" class="mm-item ${settings.provider === key ? 'active' : ''}" data-provider="${key}">
-        <span class="dot" style="background:${p.color}"></span>
         <span class="mm-text"><span class="mm-name">${p.label}</span>${ok ? '' : '<span class="mm-sub">Not connected</span>'}</span>
         ${settings.provider === key ? ICONS.check : ''}
       </button>`;
@@ -410,7 +440,7 @@ function renderModelMenu() {
     <div class="mm-model">
       <select id="mmModel">${modelOptions(cfg)}</select>
     </div>
-    <button type="button" class="mm-manage" id="mmManage">${ICONS.key}<span>Manage accounts & settings</span></button>`;
+    <button type="button" class="mm-manage" id="mmManage">${ICONS.key}<span>Accounts and settings</span></button>`;
 }
 
 function toggleModelMenu(show) {
@@ -429,14 +459,15 @@ async function refreshPageInfo() {
   const row = $('#ctxRow');
   if (!pageInfo) { row.innerHTML = ''; return; }
   const img = `<img src="${esc(favicon(pageInfo.url))}" width="14" height="14" alt="">`;
+  row.title = pageInfo.url;
   row.innerHTML = includePage
-    ? `<div class="ctx-chip on" title="${esc(pageInfo.url)}">${img}<span class="ctx-title">${esc(pageInfo.title || hostOf(pageInfo.url))}</span><span class="ctx-host">${esc(hostOf(pageInfo.url))}</span><button type="button" class="ctx-x" data-ctx="remove" title="Remove page">${ICONS.x}</button></div>`
-    : `<button type="button" class="ctx-chip" data-ctx="add" title="Attach this page">${img}<span class="ctx-title">${esc(pageInfo.title || hostOf(pageInfo.url))}</span>${ICONS.plus}</button>`;
+    ? `${img}<span class="ctx-title">${esc(pageInfo.title || hostOf(pageInfo.url))}</span><span class="ctx-host">${esc(hostOf(pageInfo.url))}</span><button type="button" class="x-btn" data-ctx="remove" title="Leave this page out">${ICONS.x}</button>`
+    : `<button type="button" class="ctx-add" data-ctx="add" title="Include this page">${ICONS.plus}<span class="ctx-title">Include ${esc(pageInfo.title || hostOf(pageInfo.url))}</span></button>`;
 }
 
 function renderQueue() {
   $('#queueRow').innerHTML = queue
-    .map((q, i) => `<div class="queued"><span class="q-label">Queued</span><span class="q-text">${esc(q)}</span><button type="button" class="ctx-x" data-unqueue="${i}" title="Remove">${ICONS.x}</button></div>`)
+    .map((q, i) => `<div class="queued"><span class="q-label">Queued</span><span class="q-text">${esc(q)}</span><button type="button" class="x-btn" data-unqueue="${i}" title="Remove">${ICONS.x}</button></div>`)
     .join('');
 }
 
@@ -473,10 +504,10 @@ chrome.tabs.getCurrent?.().then((t) => { myTabId = t?.id ?? null; }).catch(() =>
 
 function notifyApproval(r, text) {
   if (!document.hidden && chat === r.chat) return;
-  chrome.notifications?.create(`rolconnect-approve:${r.chat.id}:${Date.now()}`, {
+  chrome.notifications?.create(`rold-harness-approve:${r.chat.id}:${Date.now()}`, {
     type: 'basic',
     iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-    title: `Approve: ${r.chat.title || 'RolConnect'}`,
+    title: `Approve: ${r.chat.title || 'Rold Harness'}`,
     message: text,
     priority: 2,
   }, () => void chrome.runtime.lastError);
@@ -484,7 +515,7 @@ function notifyApproval(r, text) {
 
 chrome.notifications?.onClicked.addListener((nid) => {
   const [prefix, chatId] = nid.split(':');
-  if (prefix !== 'rolconnect-approve' || !runs.has(chatId)) return;
+  if (prefix !== 'rold-harness-approve' || !runs.has(chatId)) return;
   chrome.notifications.clear(nid);
   if (myTabId != null) {
     chrome.tabs.update(myTabId, { active: true }).then((t) => chrome.windows.update(t.windowId, { focused: true })).catch(() => {});
@@ -508,11 +539,10 @@ function updateSendBtn() {
   $('#sendBtn').innerHTML = stop ? ICONS.stop : ICONS.send;
   $('#sendBtn').classList.toggle('stop', stop);
   $('#sendBtn').title = stop ? 'Stop' : running ? (queueMode ? 'Queue' : 'Steer') : 'Send (Enter)';
-  $('#input').placeholder = running ? (queueMode ? 'Queue a follow-up…' : 'Steer the agent…') : PLACEHOLDER;
+  $('#input').placeholder = running ? (queueMode ? 'Queue a follow-up' : 'Steer the agent') : PLACEHOLDER;
   $('#pauseBtn').hidden = !running;
   $('#pauseBtn').innerHTML = run?.paused ? ICONS.play : ICONS.pause;
   $('#pauseBtn').title = run?.paused ? 'Resume' : 'Pause and take over';
-  $('#pauseBtn').classList.toggle('on', !!run?.paused);
 }
 const setRunning = updateSendBtn;
 
@@ -543,7 +573,7 @@ function followUp(text) {
   } else {
     run.steer.push(text);
     const am = run.chat.messages[run.idx];
-    am.steps.push({ kind: 'steer', label: text, status: 'running' });
+    am.steps.push({ kind: 'steer', label: text, status: 'running', at: Date.now() });
     run.paint();
     if (run.paused) resumeRun();
   }
@@ -603,7 +633,7 @@ async function send(text, { regenerate = false, target = null } = {}) {
   // Keeps the browser from freezing this page while it sits in a background tab.
   let release;
   const held = new Promise((res) => { release = res; });
-  navigator.locks?.request(`rolconnect-run-${thisChat.id}`, () => held).catch(() => {});
+  navigator.locks?.request(`rold-harness-run-${thisChat.id}`, () => held).catch(() => {});
 
   const seen = new Set();
   const paint = thisRun.paint;
@@ -621,7 +651,7 @@ async function send(text, { regenerate = false, target = null } = {}) {
       return out;
     },
     step(s) {
-      am.steps.push({ ...s });
+      am.steps.push({ at: Date.now(), ...s });
       paint();
       return am.steps.length - 1;
     },
@@ -668,6 +698,7 @@ async function send(text, { regenerate = false, target = null } = {}) {
     q.unshift(...thisRun.steer.splice(0));
     am.steps = am.steps.filter((s) => !(s.kind === 'steer' && s.status === 'running'));
     am.status = 'done';
+    am.doneAt = Date.now();
     am.waiting = false;
     am.steps.forEach((s) => s.status === 'running' && (s.status = 'error'));
     runs.delete(thisChat.id);
@@ -702,17 +733,17 @@ function providerPane(key) {
   const p = PROVIDERS[key];
   const cfg = settings.providers[key];
   return `<div class="pane" data-pane="${key}">
-    ${p.keyUrl ? `<a class="btn signin" href="${p.keyUrl}" target="_blank" rel="noopener">${ICONS.external}<span>Sign in to ${esc(p.vendor)} & get a key</span></a>` : ''}
     <label class="field"><span>API key</span>
       <div class="key-row"><input data-f="apiKey" type="password" value="${esc(cfg.apiKey || '')}" placeholder="${esc(p.keyHint)}" spellcheck="false" autocomplete="off">
-      <button type="button" class="btn ghost small" data-showkey>Show</button></div>
+      <button type="button" class="btn small" data-showkey>Show</button></div>
     </label>
     <label class="field"><span>Model</span>
       <div class="key-row"><select data-f="model">${modelOptions(cfg)}</select>
-      <button type="button" class="btn ghost small" data-loadmodels title="Reload the model list">Refresh</button></div>
+      <button type="button" class="btn small" data-loadmodels title="Reload the model list">Refresh</button></div>
     </label>
     <div class="pane-actions">
       <button type="button" class="btn primary" data-use>Use ${esc(p.label)}</button>
+      ${p.keyUrl ? `<a class="btn link" href="${p.keyUrl}" target="_blank" rel="noopener">Get a key from ${esc(p.vendor)}${ICONS.external}</a>` : ''}
       <span class="status" data-status></span>
     </div>
   </div>`;
@@ -723,13 +754,13 @@ function openSettings(tab = settings.provider) {
   m.innerHTML = `<div class="dialog" role="dialog" aria-label="Settings">
     <div class="dlg-head"><h2>Settings</h2><button class="icon-btn" data-close title="Close">${ICONS.x}</button></div>
     <div class="dlg-body">
-      <h3>Accounts</h3>
+      <h3>${ICONS.key}Accounts</h3>
       <div class="tabs">${Object.entries(PROVIDERS)
-        .map(([k, p]) => `<button type="button" class="tab ${k === tab ? 'active' : ''}" data-tab="${k}"><span class="dot" style="background:${p.color}"></span>${p.label}${isConfigured(settings, k) ? '<span class="ok">●</span>' : ''}</button>`)
+        .map(([k, p]) => `<button type="button" class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${p.label}${isConfigured(settings, k) ? `<span class="ok" title="Connected">${ICONS.check}</span>` : ''}</button>`)
         .join('')}</div>
       <div class="panes">${Object.keys(PROVIDERS).map(providerPane).join('')}</div>
 
-      <h3>Agent</h3>
+      <h3>${ICONS.shield}Agent</h3>
       <label class="field row"><span>Permissions</span>
         <select data-g="permission">${Object.entries(PERMISSIONS).map(([v, l]) => `<option value="${v}" ${settings.permission === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field row"><span>Messages sent while it works</span>
@@ -739,7 +770,7 @@ function openSettings(tab = settings.provider) {
       <label class="field row"><span>Use the provider's built-in web search</span>
         <input type="checkbox" class="switch" data-g="nativeSearch" ${settings.nativeSearch ? 'checked' : ''}></label>
 
-      <h3>Memory</h3>
+      <h3>${ICONS.memory}Memory</h3>
       <label class="field row"><span>Memory</span>
         <input type="checkbox" class="switch" data-m="enabled" ${settings.memory.enabled ? 'checked' : ''}></label>
       <label class="field row"><span>Use browsing history</span>
@@ -749,16 +780,16 @@ function openSettings(tab = settings.provider) {
           .map(([v, l]) => `<option value="${v}" ${settings.memory.retention === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <div class="mem-list" id="memList"></div>
       <div class="key-row mem-add"><input id="memNew" placeholder="Add a memory" autocomplete="off">
-        <button type="button" class="btn ghost small" data-memadd>Add</button></div>
+        <button type="button" class="btn small" data-memadd>Add</button></div>
 
-      <h3>Routines</h3>
+      <h3 id="routinesHead">${ICONS.routine}Routines</h3>
       <div class="routine-list" id="routineList"></div>
       <div id="routineForm"></div>
-      <button type="button" class="btn ghost small" data-rnew>${ICONS.plus}<span>New routine</span></button>
+      <button type="button" class="btn small r-new" data-rnew>${ICONS.plus}<span>New routine</span></button>
 
-      <h3>Appearance & data</h3>
+      <h3>${ICONS.display}Appearance and data</h3>
       <label class="field row"><span>Theme</span>
-        <select data-g="theme">${['system', 'light', 'dark'].map((v) => `<option ${settings.theme === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        <select data-g="theme">${[['system', 'Match the system'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<option value="${v}" ${settings.theme === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <div class="field row"><span>Chat history</span>
         <button type="button" class="btn danger small" data-clear>Delete all chats</button></div>
     </div>
@@ -778,7 +809,7 @@ function refreshTabDots() {
   $$('#settingsModal .tab').forEach((t) => {
     const on = isConfigured(settings, t.dataset.tab);
     const dot = $('.ok', t);
-    if (on && !dot) t.insertAdjacentHTML('beforeend', '<span class="ok">●</span>');
+    if (on && !dot) t.insertAdjacentHTML('beforeend', `<span class="ok" title="Connected">${ICONS.check}</span>`);
     if (!on && dot) dot.remove();
   });
 }
@@ -798,7 +829,7 @@ async function loadModels(key) {
   };
   if (!hasCredentials(cfg)) { setStatus('', ''); return false; }
   const seq = (loadSeq[key] = (loadSeq[key] || 0) + 1);
-  setStatus('', 'Loading models…');
+  setStatus('', 'Loading models');
   let ok = false;
   try {
     const models = await listModels(key, cfg);
@@ -808,7 +839,7 @@ async function loadModels(key) {
       const def = PROVIDERS[key].defaultModel;
       cfg.model = models.includes(def) ? def : models[0] || '';
     }
-    setStatus('good', `Connected · ${models.length} models`);
+    setStatus('good', `Connected, ${models.length} models`);
     // First connected account: start using it right away.
     if (!isConfigured(settings, settings.provider) && isConfigured(settings, key)) settings.provider = key;
     ok = true;
@@ -834,7 +865,7 @@ async function renderMemories() {
   const list = (await getMemories(settings)).sort((a, b) => (b.updated || b.created) - (a.updated || a.created));
   el.innerHTML = list
     .map((m) => `<div class="mem-item" data-mid="${esc(m.id)}">
-      <span class="mem-kind ${m.kind === 'episodic' ? 'task' : ''}">${m.kind === 'episodic' ? 'Task' : 'Fact'}</span>
+      <span class="mem-kind">${m.kind === 'episodic' ? 'Task' : 'Fact'}</span>
       <input class="mem-text" value="${esc(m.text)}" spellcheck="false">
       <button type="button" class="icon-btn" data-memdel="${esc(m.id)}" title="Forget">${ICONS.trash}</button></div>`)
     .join('');
@@ -857,16 +888,16 @@ async function renderRoutines() {
     .map((r) => `<div class="routine ${r.active ? '' : 'paused'}" data-rid="${esc(r.id)}">
       <div class="r-head">
         <div class="r-main"><span class="r-name">${esc(r.name)}</span>
-          <span class="r-sched">${esc(describeSchedule(r.schedule))}${r.kind === 'heartbeat' ? ' · same chat' : ''} · ${r.active ? (r.nextRun ? `next ${esc(fmtWhen(r.nextRun))}` : 'scheduled') : 'paused'}</span></div>
+          <span class="r-sched">${esc(describeSchedule(r.schedule))}${r.kind === 'heartbeat' ? ', same chat' : ''}. ${r.active ? (r.nextRun ? `Next ${esc(fmtWhen(r.nextRun))}` : 'Scheduled') : 'Paused'}</span></div>
         <div class="r-btns">
-          <button type="button" class="btn ghost small" data-rrun>Run now</button>
-          <button type="button" class="btn ghost small" data-rtoggle>${r.active ? 'Pause' : 'Resume'}</button>
-          <button type="button" class="btn ghost small" data-redit>Edit</button>
+          <button type="button" class="icon-btn" data-rrun title="Run now">${ICONS.play}</button>
+          <button type="button" class="icon-btn" data-rtoggle title="${r.active ? 'Pause' : 'Resume'}">${r.active ? ICONS.pause : ICONS.retry}</button>
+          <button type="button" class="icon-btn" data-redit title="Edit">${ICONS.compose}</button>
           <button type="button" class="icon-btn" data-rdel title="Delete">${ICONS.trash}</button>
         </div>
       </div>
       ${r.runs?.length ? `<div class="r-runs">${r.runs.slice(0, 5)
-        .map((x) => `<button type="button" class="r-run s-${esc(String(x.status).replace(/\s+/g, '-'))}" ${x.chatId ? `data-rchat="${esc(x.chatId)}"` : 'disabled'} title="${esc(x.note || '')}">${esc(fmtWhen(x.ts))} · ${esc(x.status)}</button>`)
+        .map((x) => `<button type="button" class="r-run s-${esc(String(x.status).replace(/\s+/g, '-'))}" ${x.chatId ? `data-rchat="${esc(x.chatId)}"` : 'disabled'} title="${esc(x.note || '')}">${esc(String(x.status)[0].toUpperCase() + String(x.status).slice(1))} ${esc(fmtWhen(x.ts))}</button>`)
         .join('')}</div>` : ''}
     </div>`)
     .join('');
@@ -880,14 +911,14 @@ function routineForm(r) {
     <label class="field"><span>Instructions</span><textarea data-r="instructions" rows="3">${esc(r?.instructions || '')}</textarea></label>
     <div class="field"><span>Schedule</span>
       <div class="key-row r-sched-row">
-        <select data-r="type">${opt('interval', 'Every…', s.type)}${opt('daily', 'Daily', s.type)}${opt('weekdays', 'Weekdays', s.type)}${opt('weekly', 'Weekly', s.type)}</select>
+        <select data-r="type">${opt('interval', 'Every', s.type)}${opt('daily', 'Daily', s.type)}${opt('weekdays', 'Weekdays', s.type)}${opt('weekly', 'Weekly', s.type)}</select>
         <select data-r="day" ${s.type === 'weekly' ? '' : 'hidden'}>${DAYS.map((d, i) => opt(i, d, s.day ?? 1)).join('')}</select>
         <input data-r="time" type="time" value="${s.time || '09:00'}" ${s.type === 'interval' ? 'hidden' : ''}>
         <select data-r="minutes" ${s.type === 'interval' ? '' : 'hidden'}>${[[15, '15 minutes'], [30, '30 minutes'], [60, 'hour'], [120, '2 hours'], [180, '3 hours'], [360, '6 hours'], [720, '12 hours']]
           .map(([v, l]) => opt(v, l, s.minutes || 60)).join('')}</select>
       </div>
     </div>
-    <div class="pane-actions"><button type="button" class="btn primary small" data-rsave>Save</button><button type="button" class="btn ghost small" data-rcancel>Cancel</button><span class="status" data-rstatus></span></div>
+    <div class="pane-actions"><button type="button" class="btn primary small" data-rsave>Save</button><button type="button" class="btn small" data-rcancel>Cancel</button><span class="status" data-rstatus></span></div>
   </div>`;
 }
 
@@ -992,7 +1023,7 @@ function bindSettings() {
       }
       settings.provider = key;
       renderModelPill();
-      toast(`Using ${PROVIDERS[key].label} · ${cfg.model}`);
+      toast(`Using ${cfg.model} on ${PROVIDERS[key].label}`);
       return saveSettings(settings);
     }
     if (e.target.closest('[data-clear]')) {
@@ -1085,7 +1116,7 @@ function bind() {
   });
   $('#pauseBtn').addEventListener('click', () => {
     if (run?.paused) resumeRun();
-    else pauseRun('Paused. You have control of the browser.');
+    else pauseRun('You have control of the browser. The agent waits until you resume.');
   });
   $('#queueRow').addEventListener('click', (e) => {
     const b = e.target.closest('[data-unqueue]');
@@ -1144,19 +1175,44 @@ function bind() {
 
   $('#newChat').addEventListener('click', newChat);
   $('#topNew').addEventListener('click', newChat);
+  $('#searchChats').addEventListener('click', () => {
+    const row = $('#searchRow');
+    row.hidden = !row.hidden;
+    $('#searchChats').hidden = !row.hidden;
+    if (!row.hidden) $('#chatSearch').focus();
+  });
+  $('#chatSearch').addEventListener('input', (e) => { chatFilter = e.target.value; renderChatList(); });
+  $('#chatSearch').addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    chatFilter = e.target.value = '';
+    $('#searchRow').hidden = true;
+    $('#searchChats').hidden = false;
+    renderChatList();
+  });
+  $('#chatSearch').addEventListener('blur', (e) => {
+    if (e.target.value) return;
+    $('#searchRow').hidden = true;
+    $('#searchChats').hidden = false;
+  });
+  $('#openRoutines').addEventListener('click', () => {
+    openSettings();
+    closeSidebarOverlay();
+    $('#routinesHead')?.scrollIntoView({ block: 'start' });
+  });
   $('#openSettings').addEventListener('click', () => openSettings());
   $('#topSettings').addEventListener('click', () => openSettings());
   $('#collapseSidebar').addEventListener('click', () => {
     $('.app').classList.add('sidebar-collapsed');
     $('.app').classList.remove('sidebar-open');
-    try { localStorage.setItem('rolconnect.sidebar', 'collapsed'); } catch {}
+    try { localStorage.setItem('rold-harness.sidebar', 'collapsed'); } catch {}
   });
   $('#showSidebar').addEventListener('click', () => {
     const app = $('.app');
     if (MODE === 'side' || window.innerWidth < 860) app.classList.toggle('sidebar-open');
     else {
       app.classList.remove('sidebar-collapsed');
-      try { localStorage.setItem('rolconnect.sidebar', 'open'); } catch {}
+      try { localStorage.setItem('rold-harness.sidebar', 'open'); } catch {}
     }
   });
   $('#scrim').addEventListener('click', closeSidebarOverlay);
@@ -1258,7 +1314,7 @@ async function init() {
   chats = await getChats();
   applyTheme();
   try {
-    if (localStorage.getItem('rolconnect.sidebar') === 'collapsed' || MODE === 'side') $('.app').classList.add('sidebar-collapsed');
+    if (localStorage.getItem('rold-harness.sidebar') === 'collapsed' || MODE === 'side') $('.app').classList.add('sidebar-collapsed');
   } catch {}
   tickClock();
   setInterval(tickClock, 15000);
