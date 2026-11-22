@@ -99,7 +99,6 @@ function shell() {
       </header>
       <div class="scroller" id="scroller">
         <section class="hero" id="hero">
-          <div class="clock" id="clock"></div>
           <h1 class="greeting" id="greeting"></h1>
         </section>
         <div class="thread" id="thread"></div>
@@ -166,9 +165,7 @@ function toast(msg) {
 }
 
 function tickClock() {
-  const now = new Date();
-  $('#clock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const h = now.getHours();
+  const h = new Date().getHours();
   const part = h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
   $('#greeting').textContent = MODE === 'side' ? 'What can I help with on this page?' : `${part}. What are we looking into?`;
 }

@@ -142,9 +142,7 @@ a { color: var(--accent); }
 .main.is-empty .topbar { position: absolute; top: 0; left: 0; right: 0; }
 .main.is-empty .hero { display: block; margin-bottom: 26px; }
 .main.is-empty .thread { display: none; }
-.clock { font-size: 64px; font-weight: 300; letter-spacing: -0.03em; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
-.greeting { font-size: 22px; font-weight: 500; margin: 14px 0 0; color: var(--text-2); letter-spacing: -0.01em; }
-.app.side .clock { display: none; }
+.greeting { font-size: 30px; font-weight: 500; margin: 0; color: var(--text); letter-spacing: -0.02em; }
 .app.side .greeting { font-size: 18px; }
 
 /* ---------- composer ---------- */
@@ -393,7 +391,7 @@ a { color: var(--accent); }
   .app.newtab.sidebar-open .sidebar { transform: none; }
   .app.newtab #showSidebar { display: inline-flex !important; }
   .app.newtab #collapseSidebar { display: none; }
-  .clock { font-size: 48px; }
+  .greeting { font-size: 24px; }
   .thread, .composer-wrap { padding-left: 16px; padding-right: 16px; }
 }
 
