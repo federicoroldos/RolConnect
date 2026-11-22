@@ -112,6 +112,7 @@ function shell() {
         <button class="icon-btn" id="topNew" title="New chat">${ICONS.compose}</button>
         <button class="icon-btn" id="topSettings" title="Settings">${ICONS.sliders}</button>
       </header>
+      <div class="sheet">
       <div class="scroller" id="scroller">
         <section class="hero" id="hero">
           <h1 class="greeting" id="greeting"></h1>
@@ -142,6 +143,7 @@ function shell() {
           </div>
         </form>
       </div>
+      </div>
     </main>
     <div class="modal" id="settingsModal" hidden></div>
   </div>`;
@@ -162,7 +164,9 @@ function applyTheme() {
 function autosize() {
   const ta = $('#input');
   ta.style.height = 'auto';
-  ta.style.height = Math.min(ta.scrollHeight, 220) + 'px';
+  const full = ta.scrollHeight + ta.offsetHeight - ta.clientHeight; // include the underline
+  ta.style.height = Math.min(full, 220) + 'px';
+  ta.style.overflowY = full > 220 ? 'auto' : 'hidden';
 }
 function scrollToBottom(force = false) {
   const sc = $('#scroller');
@@ -350,10 +354,11 @@ function rerenderMessage(idx) {
 function renderModelPill() {
   const key = settings.provider;
   const p = PROVIDERS[key];
-  const model = settings.providers[key].model || 'no model';
-  const ok = isConfigured(settings);
-  $('#modelPill').innerHTML = `${ICONS.chip}<span class="t-main">${esc(model)}</span><span class="t-sub">${p.label}</span>${ok ? '' : '<span class="t-warn">Sign in</span>'}`;
-  $('#modelPill').title = `Model: ${model} on ${p.label}`;
+  const cfg = settings.providers[key];
+  const model = cfg.model || 'Choose a model';
+  const signedIn = hasCredentials(cfg);
+  $('#modelPill').innerHTML = `${ICONS.chip}<span class="t-main${cfg.model ? '' : ' t-empty'}">${esc(model)}</span><span class="t-sub">${p.label}</span>${signedIn ? '' : '<span class="t-warn">Sign in</span>'}`;
+  $('#modelPill').title = cfg.model ? `Model: ${model} on ${p.label}` : `No model chosen on ${p.label}`;
   renderEffortPill();
 }
 
@@ -419,16 +424,17 @@ function modelOptions(cfg) {
   const list = [...(cfg.models || [])];
   if (cfg.model && !list.includes(cfg.model)) list.unshift(cfg.model);
   if (!list.length) return `<option value="" disabled selected>${hasCredentials(cfg) ? 'No models loaded yet' : 'Add your API key to load models'}</option>`;
-  return list.map((m) => `<option value="${esc(m)}" ${m === cfg.model ? 'selected' : ''}>${esc(m)}</option>`).join('');
+  const none = cfg.model ? '' : '<option value="" disabled selected>Choose a model</option>';
+  return none + list.map((m) => `<option value="${esc(m)}" ${m === cfg.model ? 'selected' : ''}>${esc(m)}</option>`).join('');
 }
 
 function renderModelMenu() {
   const items = Object.entries(PROVIDERS)
     .map(([key, p]) => {
       const cfg = settings.providers[key];
-      const ok = isConfigured(settings, key);
+      const sub = !hasCredentials(cfg) ? 'Not connected' : cfg.model ? '' : 'No model chosen';
       return `<button type="button" class="mm-item ${settings.provider === key ? 'active' : ''}" data-provider="${key}">
-        <span class="mm-text"><span class="mm-name">${p.label}</span>${ok ? '' : '<span class="mm-sub">Not connected</span>'}</span>
+        <span class="mm-text"><span class="mm-name">${p.label}</span>${sub ? `<span class="mm-sub">${sub}</span>` : ''}</span>
         ${settings.provider === key ? ICONS.check : ''}
       </button>`;
     })
@@ -595,8 +601,13 @@ async function send(text, { regenerate = false, target = null } = {}) {
     return;
   }
   if (!isConfigured(settings)) {
-    openSettings(settings.provider);
-    toast(`Connect ${PROVIDERS[settings.provider].label} first.`);
+    if (hasCredentials(settings.providers[settings.provider])) {
+      setTimeout(() => toggleModelMenu(true)); // after the click that sent closes menus
+      toast('Choose a model first.');
+    } else {
+      openSettings(settings.provider);
+      toast(`Connect ${PROVIDERS[settings.provider].label} first.`);
+    }
     return;
   }
 
@@ -835,13 +846,10 @@ async function loadModels(key) {
     const models = await listModels(key, cfg);
     if (seq !== loadSeq[key]) return false; // a newer load (newer key) won
     cfg.models = models;
-    if (!models.includes(cfg.model)) {
-      const def = PROVIDERS[key].defaultModel;
-      cfg.model = models.includes(def) ? def : models[0] || '';
-    }
+    if (!models.includes(cfg.model)) cfg.model = ''; // never pick one for the user
     setStatus('good', `Connected, ${models.length} models`);
     // First connected account: start using it right away.
-    if (!isConfigured(settings, settings.provider) && isConfigured(settings, key)) settings.provider = key;
+    if (!hasCredentials(settings.providers[settings.provider])) settings.provider = key;
     ok = true;
   } catch (err) {
     if (seq !== loadSeq[key]) return false;
@@ -1018,7 +1026,7 @@ function bindSettings() {
       if (!isConfigured(settings, key)) {
         const s = $('[data-status]', pane);
         s.className = 'status bad';
-        s.textContent = hasCredentials(cfg) ? 'Pick a model first.' : 'Add your API key first.';
+        s.textContent = hasCredentials(cfg) ? 'Choose a model first.' : 'Add your API key first.';
         return;
       }
       settings.provider = key;
@@ -1217,13 +1225,16 @@ function bind() {
   });
   $('#scrim').addEventListener('click', closeSidebarOverlay);
 
+  $('#scroller').addEventListener('scroll', (e) => {
+    $('.main').classList.toggle('scrolled', e.target.scrollTop > 4);
+  }, { passive: true });
   $('#modelPill').addEventListener('click', (e) => { e.stopPropagation(); toggleModelMenu(); });
   $('#modelMenu').addEventListener('click', (e) => {
     e.stopPropagation();
     const item = e.target.closest('[data-provider]');
     if (item) {
       const key = item.dataset.provider;
-      if (!isConfigured(settings, key)) { toggleModelMenu(false); return openSettings(key); }
+      if (!hasCredentials(settings.providers[key])) { toggleModelMenu(false); return openSettings(key); }
       settings.provider = key;
       saveSettings(settings);
       renderModelPill();
@@ -1237,6 +1248,7 @@ function bind() {
     settings.providers[settings.provider].model = e.target.value.trim();
     saveSettings(settings);
     renderModelPill();
+    renderModelMenu();
   });
   $('#effortPill').addEventListener('click', (e) => { e.stopPropagation(); toggleEffortMenu(); });
   $('#effortMenu').addEventListener('click', (e) => {
@@ -1332,7 +1344,7 @@ async function init() {
     const c = settings.providers[k];
     if (hasCredentials(c) && modelsStale(c)) loadModels(k);
   }
-  if (!isConfigured(settings) && !Object.keys(PROVIDERS).some((k) => isConfigured(settings, k))) {
+  if (!Object.keys(PROVIDERS).some((k) => hasCredentials(settings.providers[k]))) {
     setTimeout(() => openSettings('opencode'), 300);
   }
   $('#input').focus();

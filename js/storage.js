@@ -6,7 +6,6 @@ export const PROVIDERS = {
     vendor: 'OpenCode Zen',
     keyUrl: 'https://opencode.ai/zen',
     keyHint: 'Zen API key',
-    defaultModel: 'claude-sonnet-5-5',
     color: '#8b8b8b',
   },
   opencodego: {
@@ -14,7 +13,6 @@ export const PROVIDERS = {
     vendor: 'OpenCode Go',
     keyUrl: 'https://opencode.ai/console/go',
     keyHint: 'Go API key',
-    defaultModel: 'kimi-k3',
     color: '#e8b04b',
   },
 };
@@ -22,8 +20,8 @@ export const PROVIDERS = {
 const DEFAULTS = {
   provider: 'opencode',
   providers: {
-    opencode: { apiKey: '', model: PROVIDERS.opencode.defaultModel, models: [], apis: {} },
-    opencodego: { apiKey: '', model: PROVIDERS.opencodego.defaultModel, models: [], apis: {} },
+    opencode: { apiKey: '', model: '', models: [], apis: {} },
+    opencodego: { apiKey: '', model: '', models: [], apis: {} },
   },
   effortByModel: {},
   nativeSearch: true,
