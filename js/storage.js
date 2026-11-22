@@ -45,6 +45,7 @@ const DEFAULTS = {
   },
   effortByModel: {},
   nativeSearch: true,
+  computerUse: true, // screenshots + real mouse/keyboard input through the debugger
   permission: 'guard', // 'read' | 'guard' | 'full'
   followUp: 'steer', // messages sent while the agent works: 'steer' | 'queue'
   memory: { enabled: true, history: false, retention: 'never' }, // retention: 'never' | '30d' | '90d'

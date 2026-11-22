@@ -21,6 +21,9 @@ An AI chat on every new tab that is also a browsing agent. It searches the web, 
 ### 🧭 An agent that uses your browser
 Ask for something and it does the steps: searches, reads pages, opens tabs, clicks buttons, fills in forms and presses keys. You see every step as it happens. The tabs it opens go into their own purple **RolConnect** tab group, so they never get mixed up with yours.
 
+### 🖱️ Sees and uses any page
+With **Computer use** on (Settings → Agent), it takes screenshots of tabs and uses a real mouse and keyboard, so it works with anything on screen: canvas apps, maps, editors, drag and drop. It works in background tabs without switching away from what you're doing. While it does, Edge shows a *"started debugging this browser"* bar, which goes away when the task ends; clicking **Cancel** on it stops screen control. With models that can't see images, it falls back to reading the page.
+
 ### 🛡️ You decide how much it can do
 The pill under the chat box sets the permission mode:
 
@@ -91,6 +94,8 @@ Models load as soon as you paste a key. Under the chat box you can switch provid
 | `list_tabs`, `read_tab` | See your open tabs and read them, including pages you're logged into |
 | `open_tab`, `navigate_tab`, `scroll_page`, `close_tab` | Drive tabs |
 | `get_page_elements`, `click_element`, `type_text`, `press_key`, `wait` | Use pages: buttons, links, forms, menus |
+| `screenshot` | See a tab, including background tabs |
+| `click_at`, `type_keys`, `scroll_at`, `drag` | Real mouse and keyboard at screen coordinates (Computer use) |
 | `request_approval` | Ask you before doing something important |
 | `search_history` | Search your browsing history (only when turned on) |
 | `save_memory`, `forget_memory` | Remember or forget things about you |
@@ -117,7 +122,7 @@ routine.html          background runner for routines
 css/app.css
 js/app.js             UI: chats, composer, settings, approvals
 js/agent.js           providers (Anthropic Messages, OpenAI Responses, Chat Completions) + agent loop
-js/tools.js           search, read and browser-control tools
+js/tools.js           search, read, browser-control and computer-use tools
 js/runner.js          runs a routine and saves its chat
 js/routines.js        schedule math
 js/storage.js         settings, chats, memories, routines

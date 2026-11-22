@@ -21,6 +21,7 @@ const ICONS = {
   search: ic('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   read: ic('<path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M14 3v5h5M8 13h8M8 17h5"/>'),
   tab: ic('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/>'),
+  screen: ic('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
   click: ic('<path d="m9 9 5 12 1.8-5.2L21 14z"/><path d="M7.2 2.2 8 5.1M5.1 8 2.2 7.2M14 4.1 12 6.2M6.2 12l-2.1 2"/>'),
   type: ic('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),
   think: ic('<path d="M12 3a6 6 0 0 0-3.5 10.9V17h7v-3.1A6 6 0 0 0 12 3zM9.5 21h5"/>'),
@@ -237,7 +238,7 @@ function stepSummary(steps) {
   const parts = [];
   if (n('search')) parts.push(`Searched ${n('search')}×`);
   if (n('read')) parts.push(`read ${n('read')} page${n('read') > 1 ? 's' : ''}`);
-  const acts = n('tab') + n('click') + n('type') + n('wait');
+  const acts = n('tab') + n('click') + n('type') + n('wait') + n('screen');
   if (acts) parts.push(`${acts} browser action${acts > 1 ? 's' : ''}`);
   if (n('memory')) parts.push('updated memory');
   if (n('routine')) parts.push('scheduled a routine');
@@ -737,6 +738,8 @@ function openSettings(tab = settings.provider) {
         <select data-g="permission">${Object.entries(PERMISSIONS).map(([v, l]) => `<option value="${v}" ${settings.permission === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field row"><span>Messages sent while it works</span>
         <select data-g="followUp"><option value="steer" ${settings.followUp !== 'queue' ? 'selected' : ''}>Steer</option><option value="queue" ${settings.followUp === 'queue' ? 'selected' : ''}>Queue</option></select></label>
+      <label class="field row"><span>Computer use</span>
+        <input type="checkbox" class="switch" data-g="computerUse" ${settings.computerUse ? 'checked' : ''}></label>
       <label class="field row"><span>Use the provider's built-in web search</span>
         <input type="checkbox" class="switch" data-g="nativeSearch" ${settings.nativeSearch ? 'checked' : ''}></label>
 

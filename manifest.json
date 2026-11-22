@@ -21,7 +21,8 @@
     "favicon",
     "tabGroups",
     "alarms",
-    "notifications"
+    "notifications",
+    "debugger"
   ],
   "optional_permissions": ["history"],
   "host_permissions": ["<all_urls>"],

@@ -388,6 +388,216 @@ async function searchBingTab(query, limit, ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Computer use: screenshots and trusted mouse/keyboard input through the
+// Chrome DevTools Protocol (chrome.debugger). Works on any page GUI, including
+// canvas apps, editors and maps. Edge shows a "debugging" bar while attached.
+
+const SHOT_MAX_W = 1280;
+const SHOT_MAX_H = 900;
+const attached = new Map(); // tabId → Set of run objects using it
+const stopped = new Set(); // tabs where the user clicked Cancel on the debugging bar
+
+if (chrome.debugger?.onDetach) {
+  chrome.debugger.onDetach.addListener(({ tabId }, reason) => {
+    attached.delete(tabId);
+    if (reason === 'canceled_by_user') stopped.add(tabId);
+  });
+}
+
+const cdp = (tabId, method, params = {}) => chrome.debugger.sendCommand({ tabId }, method, params);
+
+async function attachTab(tab, ctx) {
+  if (!chrome.debugger) throw new Error('Computer use needs the "debugger" permission. Reload RolConnect in edge://extensions.');
+  if (!isWebUrl(tab.url)) throw new Error("Can't control this tab. Browser-internal pages and the add-ons store are off limits.");
+  if (stopped.has(tab.id)) throw new Error('The user stopped screen control on this tab. Use get_page_elements and the element tools instead.');
+  const users = attached.get(tab.id);
+  if (users) { if (ctx?.run) users.add(ctx.run); return; }
+  try {
+    await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+  } catch (e) {
+    if (!/already attached/i.test(e.message)) throw new Error(`Can't control this tab (${e.message}).`);
+  }
+  attached.set(tab.id, new Set(ctx?.run ? [ctx.run] : []));
+  // Background tabs behave as if focused, so menus, hovers and carets work.
+  await cdp(tab.id, 'Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+  // A tiny screencast keeps background tabs painting, so screenshots don't need to switch tabs.
+  await cdp(tab.id, 'Page.startScreencast', { format: 'jpeg', quality: 1, maxWidth: 32, maxHeight: 32, everyNthFrame: 600 }).catch(() => {});
+  await sleep(400); // Edge's debugging bar resizes the page as it appears
+}
+
+// Called when a run ends: detach from every tab only this run was using.
+export async function releaseComputer(run) {
+  for (const [tabId, users] of [...attached]) {
+    users.delete(run);
+    if (users.size) continue;
+    attached.delete(tabId);
+    await chrome.debugger.detach({ tabId }).catch(() => {});
+  }
+  stopped.clear();
+}
+
+const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
+
+// Viewport in CSS pixels and the size of the screenshot the model sees.
+async function viewport(tabId) {
+  const m = await cdp(tabId, 'Page.getLayoutMetrics');
+  const v = m.cssVisualViewport || m.visualViewport || m.layoutViewport;
+  const w = Math.round(v.clientWidth), h = Math.round(v.clientHeight);
+  const s = Math.min(1, SHOT_MAX_W / w, SHOT_MAX_H / h);
+  return { w, h, iw: Math.round(w * s), ih: Math.round(h * s), scale: s };
+}
+
+async function captureTab(tab) {
+  const shot = () => withTimeout(cdp(tab.id, 'Page.captureScreenshot', { format: 'png' }), 4000, 'timeout');
+  try {
+    return (await shot()).data;
+  } catch {
+    // Hidden tabs may not paint: bring it to the front for a moment, then restore the user's tab.
+    const [prev] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+    await chrome.tabs.update(tab.id, { active: true });
+    try {
+      await sleep(350);
+      return (await shot()).data;
+    } finally {
+      if (prev && prev.id !== tab.id) chrome.tabs.update(prev.id, { active: true }).catch(() => {});
+    }
+  }
+}
+
+async function resizeShot(b64, iw, ih) {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const bmp = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+  const canvas = new OffscreenCanvas(iw, ih);
+  const g = canvas.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(bmp, 0, 0, iw, ih);
+  bmp.close();
+  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.82 });
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+async function screenshotResult(tab, note = '') {
+  const vp = await viewport(tab.id);
+  const data = await resizeShot(await captureTab(tab), vp.iw, vp.ih);
+  const t = await chrome.tabs.get(tab.id);
+  return {
+    content: `${note}Screenshot of tab id=${t.id} | ${t.title} | ${t.url}\nSize ${vp.iw}×${vp.ih}. Give x/y in this image's pixels.`,
+    image: { mediaType: 'image/jpeg', data, width: vp.iw, height: vp.ih },
+  };
+}
+
+// Converts screenshot pixels to CSS pixels of the page.
+async function toPage(tabId, x, y) {
+  const vp = await viewport(tabId);
+  const px = Number(x), py = Number(y);
+  if (!Number.isFinite(px) || !Number.isFinite(py) || px < 0 || py < 0 || px > vp.iw || py > vp.ih) {
+    throw new Error(`Coordinates (${x}, ${y}) are outside the ${vp.iw}×${vp.ih} screenshot.`);
+  }
+  return { x: px / vp.scale, y: py / vp.scale };
+}
+
+// What is under a point (for Guard approvals), self-contained for Runtime.evaluate.
+function pointInfo(x, y) {
+  let el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  const hit = el.closest('a,button,input,select,textarea,summary,label,[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="checkbox"],[role="switch"],[role="option"],[contenteditable=""],[contenteditable="true"]') || el;
+  const type = (hit.getAttribute('type') || '').toLowerCase();
+  const ac = (hit.getAttribute('autocomplete') || '').toLowerCase();
+  const label = (hit.getAttribute('aria-label') || hit.getAttribute('title') || hit.innerText || hit.value || hit.getAttribute('placeholder') || hit.getAttribute('alt') || '')
+    .replace(/\s+/g, ' ').trim().slice(0, 80);
+  const isForm = hit.form || hit.closest('form');
+  return {
+    tag: hit.tagName.toLowerCase(),
+    label,
+    submit: type === 'submit' || (hit.tagName === 'BUTTON' && !type && !!isForm),
+    search: type === 'search' || hit.getAttribute('role') === 'searchbox' || /search|buscar/i.test(hit.getAttribute('name') || '') || !!hit.closest('[role="search"], form[action*="search"]'),
+    secret: type === 'password' || /cc-|one-time-code|current-password|new-password/.test(ac),
+  };
+}
+
+function focusInfo() {
+  let el = document.activeElement;
+  while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+  if (!el || el === document.body) return null;
+  const type = (el.getAttribute('type') || '').toLowerCase();
+  const ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+  return {
+    tag: el.tagName.toLowerCase(),
+    label: (el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('name') || '').slice(0, 80),
+    multiline: el.tagName === 'TEXTAREA' || el.isContentEditable,
+    search: type === 'search' || el.getAttribute('role') === 'searchbox' || /search|buscar|^q$/i.test(el.getAttribute('name') || ''),
+    secret: type === 'password' || /cc-|one-time-code|current-password|new-password/.test(ac),
+  };
+}
+
+async function evalInTab(tabId, fn, ...args) {
+  try {
+    const r = await cdp(tabId, 'Runtime.evaluate', { expression: `(${fn})(${args.map((a) => JSON.stringify(a)).join(',')})`, returnByValue: true });
+    return r?.result?.value ?? null;
+  } catch { return null; }
+}
+
+const KEYS = {
+  enter: ['Enter', 'Enter', 13, '\r'], return: ['Enter', 'Enter', 13, '\r'], tab: ['Tab', 'Tab', 9], escape: ['Escape', 'Escape', 27], esc: ['Escape', 'Escape', 27],
+  backspace: ['Backspace', 'Backspace', 8], delete: ['Delete', 'Delete', 46], space: [' ', 'Space', 32, ' '],
+  arrowup: ['ArrowUp', 'ArrowUp', 38], arrowdown: ['ArrowDown', 'ArrowDown', 40], arrowleft: ['ArrowLeft', 'ArrowLeft', 37], arrowright: ['ArrowRight', 'ArrowRight', 39],
+  up: ['ArrowUp', 'ArrowUp', 38], down: ['ArrowDown', 'ArrowDown', 40], left: ['ArrowLeft', 'ArrowLeft', 37], right: ['ArrowRight', 'ArrowRight', 39],
+  home: ['Home', 'Home', 36], end: ['End', 'End', 35], pageup: ['PageUp', 'PageUp', 33], pagedown: ['PageDown', 'PageDown', 34], insert: ['Insert', 'Insert', 45],
+};
+const MODS = { alt: 1, ctrl: 2, control: 2, meta: 4, cmd: 4, win: 4, shift: 8 };
+
+function parseCombo(combo) {
+  const parts = String(combo).split('+').map((p) => p.trim()).filter(Boolean);
+  let mods = 0;
+  let key = null;
+  for (const p of parts) {
+    const l = p.toLowerCase();
+    if (MODS[l] && parts.length > 1) { mods |= MODS[l]; continue; }
+    if (KEYS[l]) key = KEYS[l];
+    else if (/^f([1-9]|1[0-2])$/.test(l)) key = [l.toUpperCase(), l.toUpperCase(), 111 + Number(l.slice(1))];
+    else if (p.length === 1) {
+      const up = p.toUpperCase();
+      const code = /[a-z]/i.test(p) ? 'Key' + up : /\d/.test(p) ? 'Digit' + p : '';
+      const ch = mods & 8 ? up : p;
+      key = [ch, code, up.charCodeAt(0), ch];
+    } else throw new Error(`Unknown key "${p}".`);
+  }
+  if (!key) throw new Error('No key given.');
+  return { key, mods };
+}
+
+async function pressCombo(tabId, combo) {
+  const { key: [key, code, vk, text], mods } = parseCombo(combo);
+  const printable = text && !(mods & 7);
+  const base = { key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers: mods };
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: printable ? 'keyDown' : 'rawKeyDown', ...base, ...(printable ? { text, unmodifiedText: text } : {}) });
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+}
+
+async function mouse(tabId, type, x, y, extra = {}) {
+  await cdp(tabId, 'Input.dispatchMouseEvent', { type, x, y, ...extra });
+}
+
+// Shared prologue for computer-use actions.
+async function controlTab(tab_id, ctx) {
+  const tab = await targetTab(tab_id);
+  await attachTab(tab, ctx);
+  return tab;
+}
+
+async function afterAction(tab, ms, ctx, note) {
+  await sleep(ms);
+  await waitForTab(tab.id, 8000);
+  if (ctx?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  return screenshotResult(await chrome.tabs.get(tab.id), note);
+}
+
+const COORD = (axis) => int(`${axis} in screenshot pixels.`);
+
+// ---------------------------------------------------------------------------
 // Tool definitions
 
 const str = (description) => ({ type: 'string', description });
@@ -682,6 +892,145 @@ export const TOOLS = [
     },
   },
   {
+    name: 'screenshot',
+    kind: 'screen',
+    needsComputer: true,
+    description:
+      'See a tab: returns a screenshot of its visible area. Use it to understand visual layouts, canvas apps, maps, editors, charts and images, and to find x/y coordinates for click_at, scroll_at and drag. Works on background tabs.',
+    parameters: obj({ tab_id: TAB_ID }),
+    label: () => 'Looking at the screen',
+    async run({ tab_id }, ctx) {
+      const tab = await controlTab(tab_id, ctx);
+      return screenshotResult(tab);
+    },
+  },
+  {
+    name: 'click_at',
+    kind: 'click',
+    browserControl: true,
+    needsComputer: true,
+    description:
+      'Real mouse action at x/y from the latest screenshot of that tab: left_click (default), double_click, triple_click, right_click or hover. Works on anything visible, including canvas and custom widgets. Returns a new screenshot. Set consequential=true for clicks that send, post, pay, buy, delete or submit.',
+    parameters: obj(
+      {
+        tab_id: TAB_ID,
+        x: COORD('X'),
+        y: COORD('Y'),
+        action: { type: 'string', enum: ['left_click', 'double_click', 'triple_click', 'right_click', 'hover'] },
+        modifiers: str('Keys held during the click, e.g. "ctrl" or "shift" (optional).'),
+        consequential: CONSEQUENTIAL,
+      },
+      ['x', 'y'],
+    ),
+    label: (a) => `${{ double_click: 'Double-clicking', triple_click: 'Triple-clicking', right_click: 'Right-clicking', hover: 'Hovering' }[a.action] || 'Clicking'} at ${a.x}, ${a.y}`,
+    async run({ tab_id, x, y, action = 'left_click', modifiers, consequential }, ctx) {
+      const tab = await controlTab(tab_id, ctx);
+      const p = await toPage(tab.id, x, y);
+      const d = await evalInTab(tab.id, pointInfo, p.x, p.y);
+      const what = d ? `${d.tag}${d.label ? ` “${d.label}”` : ''}` : `point ${x}, ${y}`;
+      if (action !== 'hover') {
+        const crucial = !!consequential || (!!d && !d.search && (d.submit || CRUCIAL.test(d.label)));
+        const ok = await approve(ctx, `Click ${what} on ${host(tab.url)}`, crucial);
+        if (!ok) return { content: 'The user did not approve this click. Do not retry it; ask them how to proceed.', isError: true };
+      }
+      const mods = modifiers ? String(modifiers).split('+').reduce((m, k) => m | (MODS[k.trim().toLowerCase()] || 0), 0) : 0;
+      await mouse(tab.id, 'mouseMoved', p.x, p.y, { modifiers: mods });
+      if (action !== 'hover') {
+        const button = action === 'right_click' ? 'right' : 'left';
+        const buttons = button === 'right' ? 2 : 1;
+        const times = { double_click: 2, triple_click: 3 }[action] || 1;
+        for (let n = 1; n <= times; n++) {
+          await mouse(tab.id, 'mousePressed', p.x, p.y, { button, buttons, clickCount: n, modifiers: mods });
+          await mouse(tab.id, 'mouseReleased', p.x, p.y, { button, buttons: 0, clickCount: n, modifiers: mods });
+        }
+      }
+      const r = await afterAction(tab, action === 'hover' ? 400 : 900, ctx);
+      return { ...r, detail: d?.label || undefined };
+    },
+  },
+  {
+    name: 'type_keys',
+    kind: 'type',
+    browserControl: true,
+    needsComputer: true,
+    description:
+      'Real keyboard input into whatever is focused on a tab (click_at a field first). text types characters; key presses a key or shortcut after the text, e.g. "Enter", "Tab", "Escape", "Backspace", "ctrl+a", "ctrl+shift+k", "F2". Returns a new screenshot. Set consequential=true when the key sends, posts or submits.',
+    parameters: obj(
+      {
+        tab_id: TAB_ID,
+        text: str('Text to type (optional).'),
+        key: str('Key or shortcut to press after the text (optional).'),
+        repeat: int('Times to press the key, 1-50 (default 1).'),
+        consequential: CONSEQUENTIAL,
+      },
+    ),
+    label: (a) => (a.text ? `Typing “${String(a.text).slice(0, 40)}”` : `Pressing ${a.key}`),
+    async run({ tab_id, text, key, repeat, consequential }, ctx) {
+      if (!text && !key) return { content: 'Give text, key, or both.', isError: true };
+      const tab = await controlTab(tab_id, ctx);
+      if (key) parseCombo(key); // validate before typing anything
+      const f = await evalInTab(tab.id, focusInfo);
+      if (f?.secret) return { content: 'Refused: the focused field looks like a password, one-time code or payment field. Ask the user to fill it in.', isError: true };
+      const k = String(key || '').toLowerCase().replace(/\s/g, '');
+      const sends = /(^|\+)(enter|return)$/.test(k) && (k !== 'enter' && k !== 'return' ? true : !!f && !f.search && (f.multiline || f.tag === 'input'));
+      const crucial = !!consequential || sends;
+      const desc = [text ? `Type “${text}”` : '', key ? `press ${key}` : ''].filter(Boolean).join(' and ');
+      const ok = await approve(ctx, `${desc}${f?.label ? ` in “${f.label}”` : ''} on ${host(tab.url)}`, crucial);
+      if (!ok) return { content: 'The user did not approve this. Do not retry it; ask them how to proceed.', isError: true };
+      if (text) await cdp(tab.id, 'Input.insertText', { text: String(text) });
+      if (key) {
+        const times = Math.max(1, Math.min(50, repeat || 1));
+        for (let i = 0; i < times; i++) await pressCombo(tab.id, key);
+      }
+      return afterAction(tab, /enter|return/.test(k) ? 1200 : 400, ctx);
+    },
+  },
+  {
+    name: 'scroll_at',
+    kind: 'tab',
+    browserControl: true,
+    needsComputer: true,
+    description: 'Scroll with the mouse wheel at x/y (scrolls whatever is under the pointer: the page, a list, a map). Returns a new screenshot.',
+    parameters: obj(
+      { tab_id: TAB_ID, x: COORD('X'), y: COORD('Y'), direction: { type: 'string', enum: ['down', 'up', 'left', 'right'] }, amount: int('Wheel steps, 1-20 (default 5).') },
+      ['x', 'y', 'direction'],
+    ),
+    label: (a) => `Scrolling ${a.direction}`,
+    async run({ tab_id, x, y, direction, amount }, ctx) {
+      const tab = await controlTab(tab_id, ctx);
+      const p = await toPage(tab.id, x, y);
+      const px = Math.max(1, Math.min(20, amount || 5)) * 100;
+      const dx = direction === 'right' ? px : direction === 'left' ? -px : 0;
+      const dy = direction === 'down' ? px : direction === 'up' ? -px : 0;
+      await mouse(tab.id, 'mouseMoved', p.x, p.y);
+      await mouse(tab.id, 'mouseWheel', p.x, p.y, { deltaX: dx, deltaY: dy });
+      return afterAction(tab, 600, ctx);
+    },
+  },
+  {
+    name: 'drag',
+    kind: 'click',
+    browserControl: true,
+    needsComputer: true,
+    description: 'Drag with the mouse from one point to another (sliders, maps, drawing, moving items). Coordinates from the latest screenshot. Returns a new screenshot.',
+    parameters: obj({ tab_id: TAB_ID, from_x: COORD('Start X'), from_y: COORD('Start Y'), to_x: COORD('End X'), to_y: COORD('End Y') }, ['from_x', 'from_y', 'to_x', 'to_y']),
+    label: (a) => `Dragging to ${a.to_x}, ${a.to_y}`,
+    async run({ tab_id, from_x, from_y, to_x, to_y }, ctx) {
+      const tab = await controlTab(tab_id, ctx);
+      const a = await toPage(tab.id, from_x, from_y);
+      const b = await toPage(tab.id, to_x, to_y);
+      await mouse(tab.id, 'mouseMoved', a.x, a.y);
+      await mouse(tab.id, 'mousePressed', a.x, a.y, { button: 'left', buttons: 1, clickCount: 1 });
+      const steps = 12;
+      for (let i = 1; i <= steps; i++) {
+        await mouse(tab.id, 'mouseMoved', a.x + ((b.x - a.x) * i) / steps, a.y + ((b.y - a.y) * i) / steps, { button: 'left', buttons: 1 });
+        await sleep(16);
+      }
+      await mouse(tab.id, 'mouseReleased', b.x, b.y, { button: 'left', buttons: 0, clickCount: 1 });
+      return afterAction(tab, 600, ctx);
+    },
+  },
+  {
     name: 'request_approval',
     kind: 'approval',
     description: 'Ask the user to approve a specific action before you do it (for anything risky or that you are unsure they want). Returns approved or declined.',
@@ -782,9 +1131,10 @@ export const TOOLS = [
   },
 ];
 
-export function selectTools({ nativeSearch, permission, memory, history, headless }) {
+export function selectTools({ nativeSearch, permission, memory, history, headless, computer }) {
   return TOOLS.filter((t) =>
     !(t.clientSearch && nativeSearch) &&
+    !(t.needsComputer && !computer) &&
     !(t.browserControl && permission === 'read') &&
     !(t.needsMemory && !memory) &&
     !(t.needsHistory && !history) &&
