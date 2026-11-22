@@ -766,12 +766,15 @@ function openSettings(tab = settings.provider) {
     <div class="dlg-head"><h2>Settings</h2><button class="icon-btn" data-close title="Close">${ICONS.x}</button></div>
     <div class="dlg-body">
       <h3>${ICONS.key}Accounts</h3>
+      <section class="set-card">
       <div class="tabs">${Object.entries(PROVIDERS)
         .map(([k, p]) => `<button type="button" class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${p.label}${isConfigured(settings, k) ? `<span class="ok" title="Connected">${ICONS.check}</span>` : ''}</button>`)
         .join('')}</div>
       <div class="panes">${Object.keys(PROVIDERS).map(providerPane).join('')}</div>
+      </section>
 
       <h3>${ICONS.shield}Agent</h3>
+      <section class="set-card">
       <label class="field row"><span>Permissions</span>
         <select data-g="permission">${Object.entries(PERMISSIONS).map(([v, l]) => `<option value="${v}" ${settings.permission === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field row"><span>Messages sent while it works</span>
@@ -780,8 +783,10 @@ function openSettings(tab = settings.provider) {
         <input type="checkbox" class="switch" data-g="computerUse" ${settings.computerUse ? 'checked' : ''}></label>
       <label class="field row"><span>Use the provider's built-in web search</span>
         <input type="checkbox" class="switch" data-g="nativeSearch" ${settings.nativeSearch ? 'checked' : ''}></label>
+      </section>
 
       <h3>${ICONS.memory}Memory</h3>
+      <section class="set-card">
       <label class="field row"><span>Memory</span>
         <input type="checkbox" class="switch" data-m="enabled" ${settings.memory.enabled ? 'checked' : ''}></label>
       <label class="field row"><span>Use browsing history</span>
@@ -792,17 +797,22 @@ function openSettings(tab = settings.provider) {
       <div class="mem-list" id="memList"></div>
       <div class="key-row mem-add"><input id="memNew" placeholder="Add a memory" autocomplete="off">
         <button type="button" class="btn small" data-memadd>Add</button></div>
+      </section>
 
       <h3 id="routinesHead">${ICONS.routine}Routines</h3>
+      <section class="set-card">
       <div class="routine-list" id="routineList"></div>
       <div id="routineForm"></div>
       <button type="button" class="btn small r-new" data-rnew>${ICONS.plus}<span>New routine</span></button>
+      </section>
 
       <h3>${ICONS.display}Appearance and data</h3>
+      <section class="set-card">
       <label class="field row"><span>Theme</span>
         <select data-g="theme">${[['system', 'Match the system'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<option value="${v}" ${settings.theme === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <div class="field row"><span>Chat history</span>
         <button type="button" class="btn danger small" data-clear>Delete all chats</button></div>
+      </section>
     </div>
   </div>`;
   m.hidden = false;

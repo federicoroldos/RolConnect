@@ -746,7 +746,7 @@ export const TOOLS = [
     name: 'read_tab',
     kind: 'read',
     description:
-      "Read the visible text of an open tab, including pages the user is logged into. For a browser-internal page (edge://, chrome://), captures its visible area instead. Defaults to the user's current tab — use this when they say \"this page\".",
+      "Read the visible text of an open tab, including pages the user is logged into. For a browser-internal page (edge://, chrome://), captures its visible area instead. Defaults to the user's current tab. Use this when they say \"this page\".",
     parameters: obj({ tab_id: TAB_ID }),
     label: () => 'Reading your tab',
     async run({ tab_id }) {

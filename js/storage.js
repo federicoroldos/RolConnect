@@ -2,7 +2,7 @@
 
 export const PROVIDERS = {
   opencode: {
-    label: 'OpenCode',
+    label: 'OpenCode Zen',
     vendor: 'OpenCode Zen',
     keyUrl: 'https://opencode.ai/zen',
     keyHint: 'Zen API key',
