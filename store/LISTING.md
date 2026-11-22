@@ -76,13 +76,13 @@ Rold Harness turns every new tab, and the side panel, into an AI assistant that 
 
 Ask a question and it searches the web, reads the best sources and answers with links. Ask for a task and it does the steps itself: it opens tabs, clicks, fills in forms and presses keys, and you watch every step as it happens.
 
-• Works with Claude, GPT, Kimi, GLM and more through OpenCode Zen or OpenCode Go. Bring your own API key.
+• Works with Claude, GPT, Kimi, GLM and more through OpenCode Zen (pay per use) or OpenCode Go (subscription). Bring your own API key.
 • Computer use: it sees tabs through screenshots and uses a real mouse and keyboard, so it can handle canvas apps, maps, editors and drag and drop.
 • You choose the permission level: Read only, Guard (it asks before sending, buying, deleting or publishing), or Full access. It never types passwords or card numbers.
 • Talk to it while it works: steer it mid-task, queue follow-ups, or pause and take over.
 • Tasks keep running when you switch tabs or chats, and you get a notification when one needs your approval.
 • Memory: it remembers what matters about you, and you can see, edit and delete every memory.
-• Routines: scheduled tasks, like a morning news summary or a price check, that run in the background and notify you.
+• Routines: scheduled tasks, like a morning news summary or a price check, that run in the background and notify you. Manage them from Routines in the sidebar.
 • Side panel (Ctrl+Shift+Y) next to any page, so "summarize this" just works. Or right-click → Ask Rold Harness.
 
 Private by design: your keys, chats and memories stay in your browser. Requests go directly to OpenCode, and there are no analytics or tracking.
@@ -114,7 +114,7 @@ Rold Harness needs an OpenCode API key to answer. For this test, use an OpenCode
 
 How to test:
 1. Open a new tab. Choose "Keep changes" if Edge asks about the new tab page. Settings opens.
-2. Under Accounts → OpenCode Zen, paste the key above, pick any Claude or GPT model from the list, and click "Use OpenCode Zen".
+2. Under Accounts → OpenCode Zen, paste the key above, pick any Claude or GPT model from the list (only paid models are listed), and click "Use OpenCode Zen".
 3. Ask: "What's on the front page of Hacker News?" The agent searches, opens a tab in the "Rold Harness" group, reads it and answers.
 4. Computer use: ask "Open https://excalidraw.com and draw a rectangle." Edge shows its debugging bar while the agent works. The bar goes away when the task ends.
 5. Side panel: press Ctrl+Shift+Y on any page and ask "Summarize this page".

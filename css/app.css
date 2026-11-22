@@ -252,6 +252,8 @@ svg { flex: none; }
   box-shadow: var(--shadow); padding: 6px; z-index: 40;
 }
 .main.is-empty .popover { bottom: auto; top: calc(100% + 6px); }
+/* the side panel keeps its message box at the bottom, so menus open upward there */
+.app.side .main.is-empty .popover { top: auto; bottom: calc(100% + 6px); }
 .mm-title { font-size: 12px; color: var(--text-3); padding: 8px 10px 4px; }
 .mm-item { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; padding: 8px 10px; border-radius: 7px; text-align: left; color: var(--text); }
 .mm-item:hover { background: var(--hover); }
@@ -403,8 +405,12 @@ select option { background: var(--raised); color: var(--text); }
 .tab { display: inline-flex; align-items: center; gap: 8px; border: 0; background: none; padding: 8px 0; margin-bottom: -1px; border-bottom: 2px solid transparent; font-size: 14px; color: var(--text-3); white-space: nowrap; }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--text); border-bottom-color: var(--text); font-weight: 500; }
-.tab .ok { color: var(--text-3); display: inline-flex; }
+.tab .ok { color: var(--text-3); display: inline-flex; order: 2; }
+.tab .plan { order: 1; }
 .tab .ok svg { width: 14px; height: 14px; }
+.app.side .tab { display: inline-grid; grid-template-columns: auto auto; justify-content: start; align-items: center; gap: 2px 6px; padding: 6px 0 8px; }
+.app.side .tab .plan { grid-column: 1 / -1; font-size: 12px; text-align: left; order: 2; }
+.app.side .tab .ok { order: 1; }
 .btn svg { width: 16px; height: 16px; }
 .btn.link svg { width: 14px; height: 14px; }
 .dlg-body h3 svg { width: 16px; height: 16px; }
@@ -436,6 +442,7 @@ select option { background: var(--raised); color: var(--text); }
 
 .routine-list { display: flex; flex-direction: column; margin: 0 0 6px; }
 .routine-list:empty { display: none; }
+.plan { color: var(--text-3); font-weight: 400; }
 .r-empty { margin: 12px 0 4px; font-size: 14px; color: var(--text-3); }
 .routine { padding: 10px 0; border-bottom: 1px solid var(--line); }
 .routine.paused .r-name { color: var(--text-3); }

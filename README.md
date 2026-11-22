@@ -8,7 +8,7 @@
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-8b7bff?style=for-the-badge)](manifest.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-ff8a4c?style=for-the-badge)](LICENSE)
 
-An AI chat on every new tab that is also a browsing agent. It searches the web, reads pages, and opens, clicks and types in your tabs, with **OpenCode Zen** or **OpenCode Go** (Claude, GPT, Kimi, GLM and more).
+An AI chat on every new tab that is also a browsing agent. It searches the web, reads pages, and opens, clicks and types in your tabs, with **OpenCode Zen** (pay per use) or **OpenCode Go** (subscription), for Claude, GPT, Kimi, GLM and more.
 
 </div>
 
@@ -45,7 +45,7 @@ Password and card fields are always off-limits.
 It remembers what matters about you (where you live, how you like answers, who's who) and uses it in every chat. You can see, edit and delete every memory, and choose how long task memories last. It can also look through your browsing history if you turn that on.
 
 ### ⏰ Routines
-Tasks that run on their own: every few minutes, daily, on weekdays or weekly. They run in the background and send a notification with the result. A routine can start a new chat each time or keep adding to an existing one, and you can ask the agent to set one up for you.
+Tasks that run on their own: every few minutes, daily, on weekdays or weekly. They run in the background and send a notification with the result. A routine can start a new chat each time or keep adding to an existing one, and you can ask the agent to set one up for you. **Routines** in the sidebar lists them, with their recent runs, and lets you add, run, pause, edit or delete one.
 
 ### 🪟 Side panel
 The same chat next to whatever page you're on (**Ctrl+Shift+Y**). It knows which page you're looking at, so *"summarize this"* just works. You can also right-click any page or selection → **Ask Rold Harness**.
@@ -53,7 +53,7 @@ The same chat next to whatever page you're on (**Ctrl+Shift+Y**). It knows which
 <table>
   <tr>
     <td width="32%" valign="top"><img src=".github/assets/sidepanel.png" alt="The side panel summarizing the page next to it."></td>
-    <td width="68%" valign="top"><img src=".github/assets/settings.png" alt="Settings: memories the agent saved, and two routines with their schedule and last runs."></td>
+    <td width="68%" valign="top"><img src=".github/assets/settings.png" alt="Memories the agent saved, and two routines with their schedule and last runs."></td>
   </tr>
 </table>
 
@@ -71,10 +71,12 @@ To update, pull or download the new version and click **↻** on Rold Harness in
 
 ## Accounts
 
-| Provider | What you need | Web search |
-| :-- | :-- | :-- |
-| **OpenCode Zen** | Key from [opencode.ai/zen](https://opencode.ai/zen). One key covers Claude, GPT, Kimi, GLM, Qwen, DeepSeek… | DuckDuckGo → Bing |
-| **OpenCode Go** | Key from your OpenCode Go subscription | DuckDuckGo → Bing |
+| Provider | Plan | What you need | Models |
+| :-- | :-- | :-- | :-- |
+| **OpenCode Zen** | Pay per use | Key from [opencode.ai/zen](https://opencode.ai/zen) and a prepaid balance | Zen's paid models: Claude, GPT, Kimi, GLM, Qwen, DeepSeek… |
+| **OpenCode Go** | Subscription | Key from your [OpenCode Go](https://opencode.ai/console/go) subscription | Everything in Go, including its free models |
+
+Zen's free models (the ones ending in `-free`, and `big-pickle`) only work inside OpenCode's own app, so Rold Harness doesn't list them. Web search goes through DuckDuckGo, falling back to Bing, with either account.
 
 Models load as soon as you paste a key. Under the chat box you can switch provider and model, and set the thinking effort for models that have it.
 

@@ -9,6 +9,19 @@ const ZEN = 'https://opencode.ai/inference';
 const ZEN_GO = 'https://opencode.ai/inference/go';
 const isOpenCode = (key) => key === 'opencode' || key === 'opencodego';
 
+// Zen's free models only answer inside OpenCode's own app, so Zen lists paid models only.
+// Go allows its models (free ones too) from other apps.
+const FREE_MODELS = new Set(['big-pickle']);
+export const isFreeModel = (id) => /(^|[-:])free$/i.test(id || '') || FREE_MODELS.has(id);
+const freePrice = (m) => {
+  const p = m?.cost || m?.pricing;
+  if (!p || typeof p !== 'object') return false;
+  const input = Number(p.input ?? p.prompt);
+  const output = Number(p.output ?? p.completion);
+  return input === 0 && output === 0;
+};
+export const modelAllowed = (key, id) => !(key === 'opencode' && isFreeModel(id));
+
 export function zenFamily(model) {
   if (/^(claude-|qwen3\.\d+-(plus|flash))/.test(model)) return 'anthropic';
   if (/^(gpt-|grok-|muse-)/.test(model)) return 'responses';
@@ -57,6 +70,7 @@ function resolveRoute(settings, sessionId) {
   const model = (cfg.model || '').trim();
   if (!model) throw new Error('Pick a model in Settings first.');
   if (!isOpenCode(key)) throw new Error('Pick a provider in Settings first.');
+  if (!modelAllowed(key, model)) throw new Error(`"${model}" is a free model, and OpenCode Zen's free models only work inside OpenCode's own app. Pick a paid model, or use OpenCode Go.`);
 
   const base = key === 'opencodego' ? ZEN_GO : ZEN;
   const fam = opencodeFamily(model, cfg.apis);
@@ -162,7 +176,7 @@ function aboutSection({ setup, permission, computer, memories, history, version 
 ## About you (your current setup)
 - App: Rold Harness ${version}, a browser extension.
 - Model: ${setup.model}
-- Provider: ${setup.providerLabel}. Requests go through the user's ${setup.providerLabel} account (opencode.ai), which routes them to the model.
+- Provider: ${setup.providerLabel}${setup.plan ? ` (${setup.plan})` : ''}. Requests go through the user's ${setup.providerLabel} account (opencode.ai), which routes them to the model.
 - Thinking effort: ${effort}${levels}
 - Permission level: ${PERMISSION_NAME[permission] || PERMISSION_NAME.guard}
 - Computer use (screenshots, mouse and keyboard): ${computer ? 'on' : 'off'}
@@ -452,6 +466,7 @@ export async function runAgent({ settings, history, userText, ui, signal, mode, 
     setup: {
       model: route.model,
       providerLabel: PROVIDERS[settings.provider]?.label || settings.provider,
+      plan: PROVIDERS[settings.provider]?.plan,
       effort: route.effort, chosenEffort: wantEffort, efforts,
     },
   });
@@ -496,7 +511,8 @@ export async function listModels(key, cfg) {
     if (api) cfg.apis[m.id] = api;
   }
   const ids = list
+    .filter((m) => key !== 'opencode' || !freePrice(m))
     .map((m) => m.id || m.name)
-    .filter((id) => id && opencodeFamily(id, cfg.apis) !== 'unsupported' && !/embed|image/.test(id));
+    .filter((id) => id && modelAllowed(key, id) && opencodeFamily(id, cfg.apis) !== 'unsupported' && !/embed|image/.test(id));
   return [...new Set(ids)].sort();
 }

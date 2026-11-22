@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Rold Harness: AI New Tab & Browsing Agent",
   "short_name": "Rold Harness",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Your new tab and side panel as an AI agent that searches the web, reads pages and uses your tabs. Claude, GPT and more through OpenCode Zen or OpenCode Go.",
   "homepage_url": "https://github.com/federicoroldos/RoldHarness",
   "minimum_chrome_version": "116",

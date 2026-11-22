@@ -3,7 +3,7 @@ import {
   getMemories, saveMemories, getRoutines, saveRoutine, deleteRoutine,
 } from './storage.js';
 import { renderMarkdown, esc } from './markdown.js';
-import { runAgent, listModels, effortOptions, pickEffort, effortKey, chosenEffort, buildHistory } from './agent.js';
+import { runAgent, listModels, modelAllowed, effortOptions, pickEffort, effortKey, chosenEffort, buildHistory } from './agent.js';
 import { currentPageInfo } from './tools.js';
 import { DAYS, normalizeSchedule, nextRunTime, describeSchedule } from './routines.js';
 
@@ -434,7 +434,7 @@ function renderModelMenu() {
       const cfg = settings.providers[key];
       const sub = !hasCredentials(cfg) ? 'Not connected' : cfg.model ? '' : 'No model chosen';
       return `<button type="button" class="mm-item ${settings.provider === key ? 'active' : ''}" data-provider="${key}">
-        <span class="mm-text"><span class="mm-name">${p.label}</span>${sub ? `<span class="mm-sub">${sub}</span>` : ''}</span>
+        <span class="mm-text"><span class="mm-name">${p.label} <span class="plan">(${p.plan})</span></span>${sub ? `<span class="mm-sub">${sub}</span>` : ''}</span>
         ${settings.provider === key ? ICONS.check : ''}
       </button>`;
     })
@@ -768,7 +768,7 @@ function openSettings(tab = settings.provider) {
       <h3>${ICONS.key}Accounts</h3>
       <section class="set-card">
       <div class="tabs">${Object.entries(PROVIDERS)
-        .map(([k, p]) => `<button type="button" class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${p.label}${isConfigured(settings, k) ? `<span class="ok" title="Connected">${ICONS.check}</span>` : ''}</button>`)
+        .map(([k, p]) => `<button type="button" class="tab ${k === tab ? 'active' : ''}" data-tab="${k}">${p.label} <span class="plan">(${p.plan})</span>${isConfigured(settings, k) ? `<span class="ok" title="Connected">${ICONS.check}</span>` : ''}</button>`)
         .join('')}</div>
       <div class="panes">${Object.keys(PROVIDERS).map(providerPane).join('')}</div>
       </section>
@@ -814,7 +814,7 @@ function openSettings(tab = settings.provider) {
   // Fill in model lists for connected accounts that have no list yet.
   for (const k of Object.keys(PROVIDERS)) {
     const c = settings.providers[k];
-    if (hasCredentials(c) && modelsStale(c)) loadModels(k);
+    if (hasCredentials(c) && modelsStale(k, c)) loadModels(k);
   }
 }
 
@@ -843,8 +843,9 @@ function refreshTabDots() {
   });
 }
 
-function modelsStale(cfg) {
-  return !(cfg.models || []).length || !cfg.efforts;
+function modelsStale(key, cfg) {
+  const list = cfg.models || [];
+  return !list.length || !cfg.efforts || !list.every((m) => modelAllowed(key, m)) || !modelAllowed(key, cfg.model);
 }
 
 // Load the provider's model list (runs automatically when a key is entered).
@@ -1363,7 +1364,7 @@ async function init() {
   // Refresh model lists saved before effort info existed, quietly in the background.
   for (const k of Object.keys(PROVIDERS)) {
     const c = settings.providers[k];
-    if (hasCredentials(c) && modelsStale(c)) loadModels(k);
+    if (hasCredentials(c) && modelsStale(k, c)) loadModels(k);
   }
   if (!Object.keys(PROVIDERS).some((k) => hasCredentials(settings.providers[k]))) {
     setTimeout(() => openSettings('opencode'), 300);

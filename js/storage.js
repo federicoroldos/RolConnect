@@ -3,6 +3,7 @@
 export const PROVIDERS = {
   opencode: {
     label: 'OpenCode Zen',
+    plan: 'pay per use',
     vendor: 'OpenCode Zen',
     keyUrl: 'https://opencode.ai/zen',
     keyHint: 'Zen API key',
@@ -10,6 +11,7 @@ export const PROVIDERS = {
   },
   opencodego: {
     label: 'OpenCode Go',
+    plan: 'subscription',
     vendor: 'OpenCode Go',
     keyUrl: 'https://opencode.ai/console/go',
     keyHint: 'Go API key',
