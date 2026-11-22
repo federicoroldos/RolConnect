@@ -5,6 +5,7 @@ import {
 import { renderMarkdown, esc } from './markdown.js';
 import { runAgent, listModels, modelAllowed, effortOptions, pickEffort, effortKey, chosenEffort, buildHistory } from './agent.js';
 import { currentPageInfo } from './tools.js';
+import { connectChatGPT } from './oauth.js';
 import { DAYS, normalizeSchedule, nextRunTime, describeSchedule } from './routines.js';
 
 const MODE = document.body.dataset.mode; // 'newtab' | 'side'
@@ -48,7 +49,7 @@ const ICONS = {
   steer: ic('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
   memory: ic('<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a2 2 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/>'),
   routine: ic('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
-  wait: ic('<path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9"/>'),
+  wait: ic('<path d="M6 3h12M6 21h12M8 3v3.5c0 1.2.6 2.3 1.6 3L12 12l2.4-2.5c1-.7 1.6-1.8 1.6-3V3M8 21v-3.5c0-1.2.6-2.3 1.6-3L12 12l2.4 2.5c1 .7 1.6 1.8 1.6 3V21"/>'),
   sliders: ic('<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>'),
   chip: ic('<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>'),
   compose: ic('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'),
@@ -86,6 +87,8 @@ let pageInfo = null;
 // Shell
 
 const PLACEHOLDER = MODE === 'side' ? 'Ask about this page or anything' : 'Ask anything, search the web, or enter a URL';
+const SEARCH_PLACEHOLDER = "Search with your browser's search engine";
+let inputMode = 'chat'; // 'chat' sends to the agent, 'search' hands the text to the browser's search engine
 
 function shell() {
   $('#root').innerHTML = `
@@ -138,6 +141,11 @@ function shell() {
               <div class="popover perm-menu" id="permMenu" hidden></div>
             </div>
             <span class="spacer"></span>
+            <div class="mode-switch" id="modeSwitch" role="radiogroup" aria-label="Send to" title="Switch with Tab">
+              <span class="ms-thumb"></span>
+              <button type="button" role="radio" aria-checked="true" data-im="chat">Chat</button>
+              <button type="button" role="radio" aria-checked="false" data-im="search">Search</button>
+            </div>
             <button type="button" class="icon-btn" id="pauseBtn" title="Pause and take over" hidden>${ICONS.pause}</button>
             <button type="submit" class="send-btn" id="sendBtn" title="Send (Enter)">${ICONS.send}</button>
           </div>
@@ -182,10 +190,114 @@ function toast(msg) {
   setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2600);
 }
 
+// Greetings: a pool per time of day, plus a few for particular days. One is picked when the
+// time of day changes (not on every tick), and never the same one twice in a row.
+const GREETINGS = {
+  night: [
+    'Burning the midnight oil?',
+    "Still up? What's on your mind?",
+    'Late night rabbit hole?',
+    'What are we looking into tonight?',
+    "Can't sleep? Let's find something out.",
+    'Quiet hours. What do you need?',
+    "What's keeping you up?",
+    'One more thing before bed?',
+    'Night owl mode. Where to?',
+    'The internet never sleeps. What are we digging into?',
+  ],
+  early: [
+    "Early start. What's first?",
+    "Good morning. What's on the list?",
+    'Up before everyone. What do you need?',
+    'Coffee and a question?',
+    'What are we looking into this morning?',
+    'Fresh day. Where do we start?',
+    'Morning. What should we check first?',
+    'Quiet morning. What can I dig up?',
+  ],
+  morning: [
+    'Good morning. What are we working on?',
+    'What are we looking into this morning?',
+    'Morning. Where should we start?',
+    "What's on today's list?",
+    'Any questions before lunch?',
+    'What should we tackle first?',
+    "Ready when you are. What's the plan?",
+    "What's the first thing on your mind?",
+    "Morning momentum. What's next?",
+    'What are we figuring out today?',
+  ],
+  midday: [
+    'Lunch break research?',
+    "Good afternoon. What's next?",
+    'Halfway through the day. What do you need?',
+    'What are we looking into this afternoon?',
+    'Midday check in. What can I find?',
+    'Something to read over lunch?',
+    "What's on the afternoon agenda?",
+    'Quick question over lunch?',
+  ],
+  afternoon: [
+    'What are we looking into this afternoon?',
+    "Good afternoon. What's on your mind?",
+    'Afternoon. Where should we dig?',
+    'What can I take off your plate?',
+    'Need a hand with something?',
+    "What's left on today's list?",
+    'Afternoon slump? Hand me the busywork.',
+    'What are we figuring out next?',
+    "Let's knock something out. What is it?",
+    'Curious about something?',
+  ],
+  evening: [
+    'Good evening. What are we looking into?',
+    "Evening. What's on your mind?",
+    'Winding down or just getting started?',
+    'What should we look up tonight?',
+    'Planning tomorrow or exploring tonight?',
+    'What are we looking into tonight?',
+    'Anything you meant to look up today?',
+    'Relaxed evening research?',
+    'Deciding on dinner, or something else?',
+    'What caught your eye today?',
+  ],
+  monday: ["Monday. Let's get ahead of the week.", 'New week, new questions. Where to?'],
+  friday: ["Friday afternoon. What's left before the weekend?", 'Almost the weekend. What do we need?'],
+  weekend: ['Weekend mode. What are we exploring?', "Slow weekend? Let's find something interesting.", 'Any weekend plans to look up?'],
+  side: [
+    'What can I help with on this page?',
+    'Want a summary of this page?',
+    'Questions about this page?',
+    'What should I do on this page?',
+    'Need something from this page?',
+    'What do you want to know about this?',
+    'Want me to dig into this page?',
+  ],
+};
+
+function greetingPool(d = new Date()) {
+  if (MODE === 'side') return { slot: 'side', pool: GREETINGS.side };
+  const h = d.getHours();
+  const day = d.getDay(); // 0 Sunday … 6 Saturday
+  const part = h < 5 || h >= 22 ? 'night' : h < 8 ? 'early' : h < 12 ? 'morning' : h < 14 ? 'midday' : h < 18 ? 'afternoon' : 'evening';
+  const pool = [...GREETINGS[part]];
+  if (day === 1 && (part === 'early' || part === 'morning')) pool.push(...GREETINGS.monday);
+  if (day === 5 && (part === 'afternoon' || part === 'evening')) pool.push(...GREETINGS.friday);
+  if ((day === 0 || day === 6) && part !== 'night') pool.push(...GREETINGS.weekend);
+  return { slot: `${part}-${day}`, pool };
+}
+
+let greetingSlot = '';
 function tickClock() {
-  const h = new Date().getHours();
-  const part = h < 5 ? 'tonight' : h < 12 ? 'this morning' : h < 18 ? 'this afternoon' : 'tonight';
-  $('#greeting').textContent = MODE === 'side' ? 'What can I help with on this page?' : `What are we looking into ${part}?`;
+  const { slot, pool } = greetingPool();
+  if (slot === greetingSlot) return;
+  greetingSlot = slot;
+  let last = '';
+  try { last = localStorage.getItem('rh-greeting') || ''; } catch {}
+  const options = pool.length > 1 ? pool.filter((g) => g !== last) : pool;
+  const text = options[Math.floor(Math.random() * options.length)];
+  try { localStorage.setItem('rh-greeting', text); } catch {}
+  $('#greeting').textContent = text;
 }
 
 // ---------------------------------------------------------------------------
@@ -423,7 +535,7 @@ function toggleEffortMenu(show) {
 function modelOptions(cfg) {
   const list = [...(cfg.models || [])];
   if (cfg.model && !list.includes(cfg.model)) list.unshift(cfg.model);
-  if (!list.length) return `<option value="" disabled selected>${hasCredentials(cfg) ? 'No models loaded yet' : 'Add your API key to load models'}</option>`;
+  if (!list.length) return `<option value="" disabled selected>${hasCredentials(cfg) ? 'No models loaded yet' : 'oauth' in cfg ? 'Sign in to load models' : 'Add your API key to load models'}</option>`;
   const none = cfg.model ? '' : '<option value="" disabled selected>Choose a model</option>';
   return none + list.map((m) => `<option value="${esc(m)}" ${m === cfg.model ? 'selected' : ''}>${esc(m)}</option>`).join('');
 }
@@ -540,12 +652,13 @@ function looksLikeUrl(s) {
 function updateSendBtn() {
   const running = !!controller;
   const hasText = !!$('#input').value.trim();
+  const searching = inputMode === 'search';
   const stop = running && !hasText;
   const queueMode = settings.followUp === 'queue';
-  $('#sendBtn').innerHTML = stop ? ICONS.stop : ICONS.send;
+  $('#sendBtn').innerHTML = stop ? ICONS.stop : searching ? ICONS.search : ICONS.send;
   $('#sendBtn').classList.toggle('stop', stop);
-  $('#sendBtn').title = stop ? 'Stop' : running ? (queueMode ? 'Queue' : 'Steer') : 'Send (Enter)';
-  $('#input').placeholder = running ? (queueMode ? 'Queue a follow-up' : 'Steer the agent') : PLACEHOLDER;
+  $('#sendBtn').title = stop ? 'Stop' : searching ? 'Search (Enter)' : running ? (queueMode ? 'Queue' : 'Steer') : 'Send (Enter)';
+  $('#input').placeholder = searching ? SEARCH_PLACEHOLDER : running ? (queueMode ? 'Queue a follow-up' : 'Steer the agent') : PLACEHOLDER;
   $('#pauseBtn').hidden = !running;
   $('#pauseBtn').innerHTML = run?.paused ? ICONS.play : ICONS.pause;
   $('#pauseBtn').title = run?.paused ? 'Resume' : 'Pause and take over';
@@ -584,6 +697,30 @@ function followUp(text) {
     if (run.paused) resumeRun();
   }
   updateSendBtn();
+}
+
+function setInputMode(mode) {
+  inputMode = mode;
+  const sw = $('#modeSwitch');
+  sw.classList.toggle('is-search', mode === 'search');
+  $$('[data-im]', sw).forEach((b) => b.setAttribute('aria-checked', String(b.dataset.im === mode)));
+  updateSendBtn();
+}
+
+// Search mode: the browser's own search engine runs the query, in this tab on the new tab page.
+// A new tab is used from the side panel, or when leaving would stop tasks running here.
+async function webSearch(text) {
+  text = text.trim();
+  if (!text) return;
+  const disposition = MODE === 'newtab' && !runs.size ? 'CURRENT_TAB' : 'NEW_TAB';
+  $('#input').value = '';
+  autosize();
+  updateSendBtn();
+  try {
+    await chrome.search.query({ text, disposition });
+  } catch (err) {
+    toast(`Could not search: ${err.message}`);
+  }
 }
 
 // target: the chat to run in (defaults to the one on screen). Runs keep going when you switch away.
@@ -740,21 +877,36 @@ function regenerate() {
 // ---------------------------------------------------------------------------
 // Settings modal
 
+const PLAN_NAME = { free: 'Free', plus: 'Plus', pro: 'Pro', team: 'Business', business: 'Business', enterprise: 'Enterprise', edu: 'Edu' };
+
+// Sign-in providers (ChatGPT) get an account row instead of an API key field.
+function accountField(key) {
+  const p = PROVIDERS[key];
+  const o = settings.providers[key].oauth;
+  const plan = o?.plan ? PLAN_NAME[o.plan] || o.plan : '';
+  return `<div class="field"><span>Account</span>
+      <div class="key-row acct-row">${o?.access
+        ? `<span class="acct-name">${esc(o.label || `Signed in to ${p.label}`)}${plan ? ` <span class="plan">(${esc(plan)})</span>` : ''}</span>
+           <button type="button" class="btn small" data-signout>Sign out</button>`
+        : `<button type="button" class="btn" data-signin>Sign in with ${esc(p.label)}</button>`}</div>
+    </div>`;
+}
+
 function providerPane(key) {
   const p = PROVIDERS[key];
   const cfg = settings.providers[key];
   return `<div class="pane" data-pane="${key}">
-    <label class="field"><span>API key</span>
+    ${p.oauth ? accountField(key) : `<label class="field"><span>API key</span>
       <div class="key-row"><input data-f="apiKey" type="password" value="${esc(cfg.apiKey || '')}" placeholder="${esc(p.keyHint)}" spellcheck="false" autocomplete="off">
       <button type="button" class="btn small" data-showkey>Show</button></div>
-    </label>
+    </label>`}
     <label class="field"><span>Model</span>
       <div class="key-row"><select data-f="model">${modelOptions(cfg)}</select>
       <button type="button" class="btn small" data-loadmodels title="Reload the model list">Refresh</button></div>
     </label>
     <div class="pane-actions">
       <button type="button" class="btn primary" data-use>Use ${esc(p.label)}</button>
-      ${p.keyUrl ? `<a class="btn link" href="${p.keyUrl}" target="_blank" rel="noopener">Get a key from ${esc(p.vendor)}${ICONS.external}</a>` : ''}
+      ${p.keyUrl ? `<a class="btn link" href="${p.keyUrl}" target="_blank" rel="noopener">Get a key${ICONS.external}</a>` : ''}
       <span class="status" data-status></span>
     </div>
   </div>`;
@@ -841,6 +993,40 @@ function refreshTabDots() {
     if (on && !dot) t.insertAdjacentHTML('beforeend', `<span class="ok" title="Connected">${ICONS.check}</span>`);
     if (!on && dot) dot.remove();
   });
+}
+
+async function signIn(pane) {
+  const key = pane.dataset.pane;
+  const cfg = settings.providers[key];
+  const btn = $('[data-signin]', pane);
+  const status = (cls, text) => { const s = $('[data-status]', pane); if (s) { s.className = `status ${cls}`; s.textContent = text; } };
+  if (btn) btn.disabled = true;
+  status('', `Finish signing in to ${PROVIDERS[key].label} in the new tab`);
+  try {
+    cfg.oauth = await connectChatGPT();
+    cfg.models = [];
+    cfg.efforts = {};
+    await saveSettings(settings);
+    toast(`Signed in to ${PROVIDERS[key].label}${cfg.oauth.label ? ` as ${cfg.oauth.label}` : ''}.`);
+    if (!$('#settingsModal').hidden) openSettings(key); // redraws the pane and loads the models
+    else loadModels(key);
+  } catch (err) {
+    status('bad', err.message || 'Sign-in failed.');
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function signOut(pane) {
+  const key = pane.dataset.pane;
+  const cfg = settings.providers[key];
+  cfg.oauth = null;
+  cfg.models = [];
+  cfg.efforts = {};
+  cfg.model = '';
+  await saveSettings(settings);
+  renderModelPill();
+  toast(`Signed out of ${PROVIDERS[key].label}.`);
+  openSettings(key);
 }
 
 function modelsStale(key, cfg) {
@@ -1043,13 +1229,15 @@ function bindSettings() {
       return;
     }
     if (e.target.closest('[data-loadmodels]')) return loadModels(pane.dataset.pane);
+    if (e.target.closest('[data-signin]')) return signIn(pane);
+    if (e.target.closest('[data-signout]')) return signOut(pane);
     if (e.target.closest('[data-use]')) {
       const key = pane.dataset.pane;
       const cfg = settings.providers[key];
       if (!isConfigured(settings, key)) {
         const s = $('[data-status]', pane);
         s.className = 'status bad';
-        s.textContent = hasCredentials(cfg) ? 'Choose a model first.' : 'Add your API key first.';
+        s.textContent = hasCredentials(cfg) ? 'Choose a model first.' : PROVIDERS[key].oauth ? 'Sign in first.' : 'Add your API key first.';
         return;
       }
       settings.provider = key;
@@ -1130,6 +1318,11 @@ function bind() {
   const input = $('#input');
   input.addEventListener('input', () => { autosize(); updateSendBtn(); });
   input.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
+      e.preventDefault();
+      setInputMode(inputMode === 'chat' ? 'search' : 'chat');
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       // While working, Enter on an empty box does nothing (the button stops the task).
@@ -1137,9 +1330,14 @@ function bind() {
       $('#composer').requestSubmit();
     }
   });
+  $('#modeSwitch').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-im]');
+    if (b) { setInputMode(b.dataset.im); input.focus(); }
+  });
   $('#composer').addEventListener('submit', (e) => {
     e.preventDefault();
     const text = input.value.trim();
+    if (inputMode === 'search' && text) return webSearch(text);
     if (controller) {
       if (text) followUp(text);
       else controller.abort();

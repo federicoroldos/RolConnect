@@ -8,7 +8,7 @@
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-8b7bff?style=for-the-badge)](manifest.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-ff8a4c?style=for-the-badge)](LICENSE)
 
-An AI chat on every new tab that is also a browsing agent. It searches the web, reads pages, and opens, clicks and types in your tabs, with **OpenCode Zen** (pay per use) or **OpenCode Go** (subscription), for Claude, GPT, Kimi, GLM and more.
+An AI chat on every new tab that is also a browsing agent. It searches the web, reads pages, and opens, clicks and types in your tabs, with **OpenCode Zen** (pay per use), **OpenCode Go** (subscription) or your **ChatGPT** plan, for Claude, GPT, Kimi, GLM and more.
 
 </div>
 
@@ -65,7 +65,7 @@ The same chat next to whatever page you're on (**Ctrl+Shift+Y**). It knows which
 2. Open `edge://extensions` and turn on **Developer mode**.
 3. Click **Load unpacked** and pick the `RoldHarness` folder (the one with `manifest.json`).
 4. Open a new tab. When Edge asks about the changed new tab page, choose **Keep changes**.
-5. Settings opens by itself: paste an OpenCode key, then pick a model.
+5. Settings opens by itself: paste an OpenCode key or sign in with ChatGPT, then pick a model.
 
 To update, pull or download the new version and click **↻** on Rold Harness in `edge://extensions`.
 
@@ -75,13 +75,14 @@ To update, pull or download the new version and click **↻** on Rold Harness in
 | :-- | :-- | :-- | :-- |
 | **OpenCode Zen** | Pay per use | Key from [opencode.ai/zen](https://opencode.ai/zen) and a prepaid balance | Zen's paid models: Claude, GPT, Kimi, GLM, Qwen, DeepSeek… |
 | **OpenCode Go** | Subscription | Key from your [OpenCode Go](https://opencode.ai/console/go) subscription | Everything in Go, including its free models |
+| **ChatGPT** | Subscription | Sign in with a paid ChatGPT account (Plus, Pro, Business…). No API key | The GPT models your plan offers in Codex |
 
-Zen's free models (the ones ending in `-free`, and `big-pickle`) only work inside OpenCode's own app, so Rold Harness doesn't list them. Web search goes through DuckDuckGo, falling back to Bing, with either account.
+Zen's free models (the ones ending in `-free`, and `big-pickle`) only work inside OpenCode's own app, so Rold Harness doesn't list them. ChatGPT sign-in uses the same login as OpenAI's Codex CLI, so usage counts toward your plan's Codex limits. Web search goes through DuckDuckGo, falling back to Bing, with every account.
 
-Models load as soon as you paste a key. Under the chat box you can switch provider and model, and set the thinking effort for models that have it.
+Models load as soon as you paste a key or sign in. Under the chat box you can switch provider and model, and set the thinking effort for models that have it.
 
 > [!NOTE]
-> Claude and GPT models are used through OpenCode Zen or OpenCode Go. Direct Anthropic and OpenAI accounts aren't supported.
+> Claude models are used through OpenCode Zen or OpenCode Go. Anthropic accounts and OpenAI API keys aren't supported.
 
 <details>
 <summary><b>Everything the agent can do</b></summary>
@@ -109,8 +110,8 @@ Models load as soon as you paste a key. Under the chat box you can switch provid
 
 ## Privacy
 
-- Your API keys, chats and memories stay in this browser profile. They're never synced or sent anywhere else.
-- Your messages, and the pages the agent reads, go only to the provider you picked. With OpenCode, web searches go to DuckDuckGo or Bing.
+- Your API keys, ChatGPT sign-in, chats and memories stay in this browser profile. They're never synced or sent anywhere else.
+- Your messages, and the pages the agent reads, go only to the provider you picked. Web searches go to DuckDuckGo or Bing.
 - No analytics, no tracking, no servers of its own.
 
 <details>

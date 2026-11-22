@@ -3,11 +3,32 @@
 
 import { selectTools, releaseComputer } from './tools.js';
 import { PROVIDERS } from './storage.js';
+import { ensureOAuth } from './oauth.js';
 
-const MAX_ITERATIONS = 40;
+const MAX_ITERATIONS = 50; // model turns per task
+const BUDGET_WARN = 8; // start warning when this many turns are left
+
+// A note added after each round of tool results once the budget runs low.
+// The last turn is answered without tools, so the work done so far is never thrown away.
+function budgetNote(i) {
+  const left = MAX_ITERATIONS - (i + 1); // turns left after this one
+  if (left === 1) return '[Step budget: this is your last turn. Tools are now off. Answer the user now with everything you found: what is done, what you could not get to, and how to continue. Do not apologize at length.]';
+  if (left <= BUDGET_WARN) return `[Step budget: ${left} turns left. Stop exploring and start wrapping up. If the task is too big to finish, answer with what you have and say what is left.]`;
+  return '';
+}
+const isLastTurn = (i) => i === MAX_ITERATIONS - 1;
+const OUT_OF_STEPS = '_(I ran out of steps before writing an answer. Ask me to continue and I will pick up from here.)_';
 const ZEN = 'https://opencode.ai/inference';
 const ZEN_GO = 'https://opencode.ai/inference/go';
 const isOpenCode = (key) => key === 'opencode' || key === 'opencodego';
+// ChatGPT sign-in talks to the backend the Codex CLI uses, billed to the user's ChatGPT plan.
+const CHATGPT_CODEX = 'https://chatgpt.com/backend-api/codex';
+const codexHeaders = (cfg) => ({
+  authorization: `Bearer ${cfg.oauth.access}`,
+  ...(cfg.oauth.accountId ? { 'chatgpt-account-id': cfg.oauth.accountId } : {}),
+  'OpenAI-Beta': 'responses=experimental',
+  originator: 'codex_cli_rs',
+});
 
 // Zen's free models only answer inside OpenCode's own app, so Zen lists paid models only.
 // Go allows its models (free ones too) from other apps.
@@ -69,6 +90,18 @@ function resolveRoute(settings, sessionId) {
   const cfg = settings.providers[key];
   const model = (cfg.model || '').trim();
   if (!model) throw new Error('Pick a model in Settings first.');
+  if (key === 'chatgpt') {
+    if (!cfg.oauth?.access) throw new Error('Sign in to ChatGPT in Settings first.');
+    return {
+      format: 'responses', codex: true, oauth: true, sse: true, model,
+      url: `${CHATGPT_CODEX}/responses`,
+      headers: {
+        ...codexHeaders(cfg),
+        accept: 'text/event-stream',
+        ...(sessionId ? { session_id: sessionId, conversation_id: sessionId } : {}),
+      },
+    };
+  }
   if (!isOpenCode(key)) throw new Error('Pick a provider in Settings first.');
   if (!modelAllowed(key, model)) throw new Error(`"${model}" is a free model, and OpenCode Zen's free models only work inside OpenCode's own app. Pick a paid model, or use OpenCode Go.`);
 
@@ -113,20 +146,42 @@ function pruneImages(msgs, keep, note = OLD_SHOT) {
 // Sends a request whose body holds `msgs`; retries without images if the model rejects them.
 async function post(route, body, msgs, signal) {
   pruneImages(msgs, route.noVision ? 0 : MAX_IMAGES, route.noVision ? NO_VISION : OLD_SHOT);
+  const opts = { sse: route.sse, oauth: route.oauth };
   try {
-    return await postJSON(route.url, route.headers, body, signal);
+    return await postJSON(route.url, route.headers, body, signal, opts);
   } catch (e) {
     const visionError = e.status >= 400 && e.status < 500 && ![401, 403, 429].includes(e.status) && /image|vision|multi-?modal|modalit/i.test(e.message);
     if (route.noVision || !visionError || !pruneImages(msgs, Infinity)) throw e;
     route.noVision = true;
     pruneImages(msgs, 0, NO_VISION);
-    return postJSON(route.url, route.headers, body, signal);
+    return postJSON(route.url, route.headers, body, signal, opts);
   }
 }
 
 const dataUrl = (img) => `data:${img.mediaType};base64,${img.data}`;
 
-async function postJSON(url, headers, body, signal) {
+// The ChatGPT backend only streams. The whole stream is read, then the final response is
+// taken from it (output items are collected too, in case the final event leaves them out).
+function parseSse(text) {
+  let final = null;
+  let failure = '';
+  const items = [];
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    const raw = line.slice(5).trim();
+    if (!raw || raw === '[DONE]') continue;
+    let ev;
+    try { ev = JSON.parse(raw); } catch { continue; }
+    if (ev.type === 'response.output_item.done' && ev.item) items.push(ev.item);
+    else if (ev.type === 'response.completed' || ev.type === 'response.done' || ev.type === 'response.incomplete') final = ev.response;
+    else if (ev.type === 'response.failed' || ev.type === 'error') failure = ev.response?.error?.message || ev.error?.message || ev.message || failure;
+  }
+  if (final) return { ...final, output: final.output?.length ? final.output : items };
+  if (failure) throw new Error(failure);
+  throw new Error('The model stream ended without a final response.');
+}
+
+async function postJSON(url, headers, body, signal, opts = {}) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, {
       method: 'POST',
@@ -137,7 +192,7 @@ async function postJSON(url, headers, body, signal) {
     const text = await res.text();
     let data = null;
     try { data = JSON.parse(text); } catch {}
-    if (res.ok) return data;
+    if (res.ok) return opts.sse ? parseSse(text) : data;
 
     const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
     if (retryable && attempt < 2) {
@@ -147,7 +202,7 @@ async function postJSON(url, headers, body, signal) {
     }
     const msg = data?.error?.message || data?.message || data?.detail || (typeof data?.error === 'string' ? data.error : '') || text.slice(0, 400) || res.statusText;
     const hint =
-      res.status === 401 ? '. Check your API key in Settings.' :
+      res.status === 401 ? (opts.oauth ? '. Sign in to ChatGPT again in Settings.' : '. Check your API key in Settings.') :
       res.status === 404 ? '. Check the model name in Settings.' : '';
     const err = new Error(`${res.status}: ${hint ? String(msg).replace(/\.\s*$/, '') : msg}${hint}`);
     err.status = res.status;
@@ -176,7 +231,7 @@ function aboutSection({ setup, permission, computer, memories, history, version 
 ## About you (your current setup)
 - App: Rold Harness ${version}, a browser extension.
 - Model: ${setup.model}
-- Provider: ${setup.providerLabel}${setup.plan ? ` (${setup.plan})` : ''}. Requests go through the user's ${setup.providerLabel} account (opencode.ai), which routes them to the model.
+- Provider: ${setup.providerLabel}${setup.plan ? ` (${setup.plan})` : ''}. Requests go through ${setup.via}.
 - Thinking effort: ${effort}${levels}
 - Permission level: ${PERMISSION_NAME[permission] || PERMISSION_NAME.guard}
 - Computer use (screenshots, mouse and keyboard): ${computer ? 'on' : 'off'}
@@ -231,6 +286,9 @@ Current date and time: ${new Date().toString()}.
       : `\n- You can list and read tabs${computer ? ' and see them with screenshot' : ''} but cannot click, type or navigate.`
   }
 - Messages marked [User follow-up] arrive while you are working. Adjust the task to them right away.
+- You have about ${MAX_ITERATIONS} turns per task, so spend them well. Plan the shortest path before acting, and once you have enough to answer, answer. Don't keep exploring for completeness.
+- For lists (an inbox, a feed, search results, a table of orders), read the list page once with read_tab and work from what it shows: senders, subjects, previews, dates. Open individual items only when the list isn't enough, and then only the few that matter most. Prefer URLs that filter or search directly (for example a Gmail search URL like mail.google.com/mail/u/0/#search/is:unread) over clicking through menus or typing into search boxes.
+- If a task is too big to finish in one go, answer with what you have so far, say clearly what's left, and offer to continue.
 - Finish with a direct, concise answer in markdown: short paragraphs, bullet lists, and tables for comparisons. Don't narrate your tool use in the final answer.
 - Never use em dashes (—) or en dashes (–) in your writing. Use a comma, period, colon or parentheses instead. Plain hyphens in words and ranges are fine.
 
@@ -273,10 +331,16 @@ async function execTool(tools, name, args, ctx, ui) {
   if (ctx.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   let label = tool.name;
   try { label = tool.label(args || {}); } catch {}
+  const sig = name + JSON.stringify(args || {});
+  ctx.recentCalls = [...(ctx.recentCalls || []), sig].slice(-8);
+  const repeats = ctx.recentCalls.filter((x) => x === sig).length;
   const step = ui.step({ kind: tool.kind, label, status: 'running' });
   try {
     const r = await tool.run(args || {}, ctx);
     ui.updateStep(step, { status: r.isError ? 'error' : 'done', detail: r.detail || (r.isError ? r.content : '') });
+    if (repeats >= 3 && typeof r.content === 'string') {
+      r.content += `\n\n[Note: you have made this exact call ${repeats} times in your last few steps. If it is not getting you closer, try a different approach, or answer with what you have.]`;
+    }
     (r.sources || []).forEach((s) => ui.source(s));
     return r;
   } catch (e) {
@@ -308,7 +372,8 @@ async function runAnthropic({ route, settings, tools, system, history, userText,
 
   let answer = '';
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const resp = await post(route, { ...base, messages }, messages, signal);
+    const last = isLastTurn(i);
+    const resp = await post(route, { ...base, ...(last ? { tool_choice: { type: 'none' } } : {}), messages }, messages, signal);
     const content = resp.content || [];
     let text = '';
     for (const b of content) {
@@ -325,7 +390,7 @@ async function runAnthropic({ route, settings, tools, system, history, userText,
     // Pass the assistant content back unchanged (thinking + server tool blocks included).
     messages.push({ role: 'assistant', content });
 
-    if (resp.stop_reason === 'tool_use') {
+    if (resp.stop_reason === 'tool_use' && !last) {
       if (text.trim()) ui.step({ kind: 'think', label: text.trim(), status: 'done' });
       const results = [];
       for (const b of content.filter((x) => x.type === 'tool_use')) {
@@ -337,18 +402,21 @@ async function runAnthropic({ route, settings, tools, system, history, userText,
       }
       const steer = ctx.takeSteer();
       if (steer.length) results.push({ type: 'text', text: steerText(steer) });
+      const note = budgetNote(i);
+      if (note) results.push({ type: 'text', text: note });
       messages.push({ role: 'user', content: results });
       continue;
     }
 
     answer += text;
+    if (last && !answer.trim()) answer = OUT_OF_STEPS;
     ui.text(answer);
-    if (resp.stop_reason === 'pause_turn') continue; // long server-side search turn: resume
+    if (resp.stop_reason === 'pause_turn' && !last) continue; // long server-side search turn: resume
     if (resp.stop_reason === 'refusal') answer += '\n\n_The model declined to continue this request._';
     if (resp.stop_reason === 'max_tokens') answer += '\n\n_(Response cut off at the length limit.)_';
     return answer;
   }
-  return answer + '\n\n_(Stopped after too many steps.)_';
+  return answer || OUT_OF_STEPS;
 }
 
 // ---------------------------------------------------------------------------
@@ -356,16 +424,25 @@ async function runAnthropic({ route, settings, tools, system, history, userText,
 
 async function runResponses({ route, settings, tools, system, history, userText, ui, ctx, signal }) {
   const toolDefs = tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters }));
+  const codex = !!route.codex;
   const base = { model: route.model, instructions: system, tools: toolDefs };
-  if (route.effort) base.reasoning = { effort: route.effort };
+  if (route.effort) base.reasoning = { effort: route.effort, ...(codex ? { summary: 'auto' } : {}) };
+  else if (codex) base.reasoning = { summary: 'auto' };
   base.store = false;
   base.include = ['reasoning.encrypted_content'];
+  if (codex) {
+    base.stream = true;
+    base.parallel_tool_calls = false;
+  }
+  // The ChatGPT backend doesn't keep items (store is off), so their ids can't be sent back.
+  const replay = (items) => (codex ? (items || []).map(({ id, ...rest }) => rest) : items || []);
 
   let input = history.map((m) => ({ role: m.role, content: m.text }));
   input.push({ role: 'user', content: userText });
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const body = { ...base, input };
+    const last = isLastTurn(i);
+    const body = { ...base, ...(last ? { tool_choice: 'none' } : {}), input: replay(input) };
     const resp = await post(route, body, input, signal);
     if (resp.error) throw new Error(resp.error.message || 'Request failed');
 
@@ -387,8 +464,9 @@ async function runResponses({ route, settings, tools, system, history, userText,
       } else if (item.type === 'function_call') calls.push(item);
     }
 
-    if (!calls.length) {
+    if (!calls.length || last) {
       if (resp.status === 'incomplete') text += '\n\n_(Response incomplete: ' + (resp.incomplete_details?.reason || 'unknown') + ')_';
+      if (last && !text.trim()) text = OUT_OF_STEPS;
       ui.text(text);
       return text;
     }
@@ -405,9 +483,11 @@ async function runResponses({ route, settings, tools, system, history, userText,
     const extra = [];
     if (shots.length) extra.push({ role: 'user', content: shots });
     if (steer.length) extra.push({ role: 'user', content: steerText(steer) });
-    input = [...input, ...(resp.output || []), ...outputs, ...extra];
+    const note = budgetNote(i);
+    if (note) extra.push({ role: 'user', content: note });
+    input = [...input, ...replay(resp.output), ...outputs, ...extra];
   }
-  return '_(Stopped after too many steps.)_';
+  return OUT_OF_STEPS;
 }
 
 // ---------------------------------------------------------------------------
@@ -419,15 +499,16 @@ async function runChat({ route, tools, system, history, userText, ui, ctx, signa
   const toolDefs = tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const resp = await post(route, { model: route.model, messages, tools: toolDefs, ...(route.effort ? { reasoning_effort: route.effort } : {}) }, messages, signal);
+    const last = isLastTurn(i);
+    const resp = await post(route, { model: route.model, messages, tools: toolDefs, ...(last ? { tool_choice: 'none' } : {}), ...(route.effort ? { reasoning_effort: route.effort } : {}) }, messages, signal);
     const choice = resp.choices?.[0];
     const msg = choice?.message;
     if (!msg) throw new Error('Empty response from the model.');
     const calls = msg.tool_calls || [];
     const text = typeof msg.content === 'string' ? msg.content : (msg.content || []).map((c) => c.text || '').join('');
 
-    if (!calls.length) {
-      const out = text + (choice.finish_reason === 'length' ? '\n\n_(Response cut off at the length limit.)_' : '');
+    if (!calls.length || last) {
+      const out = (last && !text.trim() ? OUT_OF_STEPS : text) + (choice.finish_reason === 'length' ? '\n\n_(Response cut off at the length limit.)_' : '');
       ui.text(out);
       return out;
     }
@@ -442,8 +523,10 @@ async function runChat({ route, tools, system, history, userText, ui, ctx, signa
     if (shots.length) messages.push({ role: 'user', content: shots });
     const steer = ctx.takeSteer();
     if (steer.length) messages.push({ role: 'user', content: steerText(steer) });
+    const note = budgetNote(i);
+    if (note) messages.push({ role: 'user', content: note });
   }
-  return '_(Stopped after too many steps.)_';
+  return OUT_OF_STEPS;
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +534,8 @@ async function runChat({ route, tools, system, history, userText, ui, ctx, signa
 // ui: { step, updateStep, source, text, confirm, gate?, takeSteer? }
 // run: state shared with the page ({ agentTabs: Set, lastAgentFocus }) so it can spot a takeover.
 export async function runAgent({ settings, history, userText, ui, signal, mode, pageInfo, sessionId, memories = [], headless = false, run = null }) {
+  const provider = settings.providers[settings.provider];
+  if (PROVIDERS[settings.provider]?.oauth) await ensureOAuth(settings.provider, provider);
   const route = resolveRoute(settings, sessionId);
   const efforts = effortOptions(settings.providers[settings.provider]);
   const wantEffort = chosenEffort(settings);
@@ -467,6 +552,9 @@ export async function runAgent({ settings, history, userText, ui, signal, mode, 
       model: route.model,
       providerLabel: PROVIDERS[settings.provider]?.label || settings.provider,
       plan: PROVIDERS[settings.provider]?.plan,
+      via: settings.provider === 'chatgpt'
+        ? "the user's ChatGPT account (chatgpt.com, the same backend the Codex CLI uses), billed to their ChatGPT plan"
+        : `the user's ${PROVIDERS[settings.provider]?.label || settings.provider} account (opencode.ai), which routes them to the model`,
       effort: route.effort, chosenEffort: wantEffort, efforts,
     },
   });
@@ -489,7 +577,26 @@ export async function runAgent({ settings, history, userText, ui, signal, mode, 
 // ---------------------------------------------------------------------------
 // Model listing / connection test
 
+async function listChatGPTModels(cfg) {
+  await ensureOAuth('chatgpt', cfg);
+  const res = await fetch(`${CHATGPT_CODEX}/models?client_version=99.0.0`, { headers: codexHeaders(cfg) });
+  const text = await res.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch {}
+  if (res.status === 401) throw new Error('Your ChatGPT sign-in expired. Sign in again.');
+  if (!res.ok) throw new Error(`${res.status}: ${data?.error?.message || data?.detail || text.slice(0, 200) || res.statusText}`);
+  const list = (data?.models || []).filter((m) => m?.slug && m.visibility !== 'hide' && !/embed|image|auto-review/.test(m.slug));
+  cfg.efforts = {};
+  for (const m of list) {
+    cfg.efforts[m.slug] = (m.supported_reasoning_levels || []).map((l) => l?.effort || l).filter((l) => EFFORT_LEVELS.includes(l));
+  }
+  const ids = [...new Set(list.map((m) => m.slug))];
+  if (!ids.length) throw new Error('ChatGPT returned no models for this account. A paid ChatGPT plan is needed.');
+  return ids;
+}
+
 export async function listModels(key, cfg) {
+  if (key === 'chatgpt') return listChatGPTModels(cfg);
   if (!isOpenCode(key)) throw new Error(`Unknown provider "${key}"`);
   const res = await fetch(`${key === 'opencodego' ? ZEN_GO : ZEN}/v1/models`, {
     headers: { authorization: `Bearer ${cfg.apiKey}` },

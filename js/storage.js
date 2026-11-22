@@ -17,6 +17,13 @@ export const PROVIDERS = {
     keyHint: 'Go API key',
     color: '#e8b04b',
   },
+  chatgpt: {
+    label: 'ChatGPT',
+    plan: 'subscription',
+    vendor: 'OpenAI',
+    oauth: true, // signs in with a ChatGPT account instead of an API key
+    color: '#10a37f',
+  },
 };
 
 const DEFAULTS = {
@@ -24,6 +31,7 @@ const DEFAULTS = {
   providers: {
     opencode: { apiKey: '', model: '', models: [], apis: {} },
     opencodego: { apiKey: '', model: '', models: [], apis: {} },
+    chatgpt: { oauth: null, model: '', models: [] },
   },
   effortByModel: {},
   nativeSearch: true,
@@ -65,11 +73,22 @@ export async function getSettings() {
 }
 
 export async function saveSettings(settings) {
+  // A sign-in may have been refreshed by another page (a routine, the side panel) since this
+  // copy was loaded. Refresh tokens are single use, so never write an older login over a newer one.
+  try {
+    const { settings: stored } = await chrome.storage.local.get('settings');
+    for (const [key, p] of Object.entries(PROVIDERS)) {
+      if (!p.oauth) continue;
+      const mine = settings.providers?.[key]?.oauth;
+      const theirs = stored?.providers?.[key]?.oauth;
+      if (mine && theirs && (theirs.expires || 0) > (mine.expires || 0)) settings.providers[key].oauth = theirs;
+    }
+  } catch {}
   await chrome.storage.local.set({ settings });
 }
 
 export function hasCredentials(cfg) {
-  return !!cfg?.apiKey;
+  return !!(cfg?.apiKey || cfg?.oauth?.access);
 }
 
 export function isConfigured(settings, key = settings.provider) {

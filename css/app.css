@@ -7,6 +7,7 @@
   --raised: #ffffff;
   --hover: #f2f2f0;
   --bubble: #f0f0ee;
+  --thumb: #ffffff;
   --line: #e8e8e5;
   --line-strong: #d4d4d0;
   --text: #18181b;
@@ -33,6 +34,7 @@
     --raised: #222225;
     --hover: #242427;
     --bubble: #27272b;
+    --thumb: #3a3a3f;
     --line: #2b2b2f;
     --line-strong: #3b3b40;
     --text: #ececec;
@@ -59,6 +61,7 @@
   --raised: #222225;
   --hover: #242427;
   --bubble: #27272b;
+  --thumb: #3a3a3f;
   --line: #2b2b2f;
   --line-strong: #3b3b40;
   --text: #ececec;
@@ -204,6 +207,23 @@ svg { flex: none; }
 .composer textarea::placeholder { color: var(--text-3); }
 .composer-bar { display: flex; align-items: center; gap: 2px; margin: 6px 0 0 -8px; }
 .spacer { flex: 1; }
+/* Chat / Search: where Enter sends the text. A sliding thumb marks the choice; Tab flips it. */
+.mode-switch {
+  position: relative; display: inline-grid; grid-template-columns: 1fr 1fr; flex: none;
+  margin-right: 8px; padding: 2px; border-radius: 9px; background: var(--bubble);
+}
+.mode-switch button {
+  position: relative; z-index: 1; border: 0; background: none; padding: 5px 11px; border-radius: 7px;
+  font-size: 13px; color: var(--text-3); transition: color 0.15s;
+}
+.mode-switch button:hover { color: var(--text); }
+.mode-switch button[aria-checked='true'] { color: var(--text); font-weight: 500; }
+.ms-thumb {
+  position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px);
+  border-radius: 7px; background: var(--thumb); box-shadow: var(--shadow-xs);
+  transition: transform 0.18s ease;
+}
+.mode-switch.is-search .ms-thumb { transform: translateX(100%); }
 .send-btn {
   width: 36px; height: 36px; border-radius: 8px; border: 0; flex: none;
   display: inline-flex; align-items: center; justify-content: center;
@@ -402,15 +422,16 @@ select option { background: var(--raised); color: var(--text); }
 .set-card > .r-new { margin: 4px 0 8px -10px; }
 .dlg-body h3 svg { color: var(--text-3); }
 .tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
-.tab { display: inline-flex; align-items: center; gap: 8px; border: 0; background: none; padding: 8px 0; margin-bottom: -1px; border-bottom: 2px solid transparent; font-size: 14px; color: var(--text-3); white-space: nowrap; }
+/* Account tabs: the name (and a check once connected) on top, the plan underneath. */
+.tab { display: inline-grid; grid-template-columns: auto auto; justify-content: start; align-items: center; gap: 2px 6px; border: 0; background: none; padding: 6px 0 8px; margin-bottom: -1px; border-bottom: 2px solid transparent; font-size: 14px; color: var(--text-3); white-space: nowrap; }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--text); border-bottom-color: var(--text); font-weight: 500; }
-.tab .ok { color: var(--text-3); display: inline-flex; order: 2; }
-.tab .plan { order: 1; }
+.tab .ok { color: var(--text-3); display: inline-flex; order: 1; }
+.tab .plan { grid-column: 1 / -1; font-size: 12px; text-align: left; order: 2; }
 .tab .ok svg { width: 14px; height: 14px; }
-.app.side .tab { display: inline-grid; grid-template-columns: auto auto; justify-content: start; align-items: center; gap: 2px 6px; padding: 6px 0 8px; }
-.app.side .tab .plan { grid-column: 1 / -1; font-size: 12px; text-align: left; order: 2; }
-.app.side .tab .ok { order: 1; }
+.app.side .tabs { gap: 14px; }
+.app.side .tab { font-size: 13px; }
+.app.side .tab .plan { font-size: 11.5px; }
 .btn svg { width: 16px; height: 16px; }
 .btn.link svg { width: 14px; height: 14px; }
 .dlg-body h3 svg { width: 16px; height: 16px; }
@@ -424,6 +445,11 @@ select option { background: var(--raised); color: var(--text); }
 .key-row { display: flex; gap: 8px; align-items: center; }
 .key-row input, .key-row select { flex: 1; min-width: 0; }
 .pane-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+.acct-row { min-height: 34px; }
+.acct-row [data-signin] { background: var(--bubble); color: var(--text); box-shadow: var(--shadow-xs); }
+.acct-row [data-signin]:hover { background: var(--hover); }
+.acct-row [data-signin]:disabled { opacity: 0.6; }
+.acct-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .status { font-size: 13px; color: var(--text-3); word-break: break-word; }
 .status.good { color: var(--text-2); }
 .status.bad { color: var(--bad); }
