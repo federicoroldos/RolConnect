@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>RolConnect routine</title>
+  <link rel="icon" href="icons/icon32.png">
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 0; display: grid; place-items: center; min-height: 100vh; background: Canvas; color: CanvasText; }
+    .box { max-width: 520px; padding: 24px; text-align: center; }
+    h1 { font-size: 18px; margin: 0 0 6px; }
+    #status { opacity: .75; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1 id="name">Routine</h1>
+    <div id="status">Starting…</div>
+  </div>
+  <script type="module" src="js/runner.js"></script>
+</body>
+</html>

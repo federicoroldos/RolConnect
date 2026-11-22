@@ -1,0 +1,1257 @@
+import {
+  PROVIDERS, getSettings, saveSettings, isConfigured, getChats, saveChat, deleteChat, clearChats,
+  getMemories, saveMemories, getRoutines, saveRoutine, deleteRoutine,
+} from './storage.js';
+import { renderMarkdown, esc } from './markdown.js';
+import { runAgent, listModels, effortOptions, pickEffort, effortKey, chosenEffort, buildHistory } from './agent.js';
+import { currentPageInfo } from './tools.js';
+import { DAYS, normalizeSchedule, nextRunTime, describeSchedule } from './routines.js';
+
+const MODE = document.body.dataset.mode; // 'newtab' | 'side'
+const $ = (sel, el = document) => el.querySelector(sel);
+const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+// ---------------------------------------------------------------------------
+// Icons (inline SVG, stroke = currentColor)
+
+const ic = (d, extra = '') =>
+  `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
+const ICONS = {
+  search: ic('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
+  read: ic('<path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M14 3v5h5M8 13h8M8 17h5"/>'),
+  tab: ic('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v5"/>'),
+  click: ic('<path d="m9 9 5 12 1.8-5.2L21 14z"/><path d="M7.2 2.2 8 5.1M5.1 8 2.2 7.2M14 4.1 12 6.2M6.2 12l-2.1 2"/>'),
+  type: ic('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),
+  think: ic('<path d="M12 3a6 6 0 0 0-3.5 10.9V17h7v-3.1A6 6 0 0 0 12 3zM9.5 21h5"/>'),
+  plus: ic('<path d="M12 5v14M5 12h14"/>'),
+  send: ic('<path d="M12 19V5M5 12l7-7 7 7"/>', 'stroke-width="2.2"'),
+  stop: '<svg viewBox="0 0 24 24" width="14" height="14"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>',
+  gear: ic('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
+  menu: ic('<path d="M4 6h16M4 12h16M4 18h16"/>'),
+  sidebar: ic('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>'),
+  trash: ic('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
+  copy: ic('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>'),
+  retry: ic('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>'),
+  check: ic('<path d="m5 12 5 5 9-10"/>'),
+  x: ic('<path d="M6 6l12 12M18 6 6 18"/>'),
+  chevron: ic('<path d="m6 9 6 6 6-6"/>'),
+  gauge: ic('<path d="M4.5 18.5a9 9 0 1 1 15 0"/><path d="m12 14 4-5"/><circle cx="12" cy="14" r="1.2"/>'),
+  page: ic('<path d="M4 5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M14 3v5h5"/>'),
+  key: ic('<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.8-8.8M16 7l3 3M18.5 4.5l2 2"/>'),
+  external: ic('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>'),
+  panel: ic('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>'),
+  pause: ic('<path d="M9 5v14M15 5v14"/>', 'stroke-width="2.4"'),
+  play: ic('<path d="M7 5v14l11-7z"/>'),
+  shield: ic('<path d="M12 3 5 6v5c0 4.4 3 8.3 7 10 4-1.7 7-5.6 7-10V6z"/>'),
+  approval: ic('<path d="M12 3 5 6v5c0 4.4 3 8.3 7 10 4-1.7 7-5.6 7-10V6z"/><path d="m9 12 2 2 4-4"/>'),
+  steer: ic('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
+  memory: ic('<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a2 2 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/>'),
+  routine: ic('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  wait: ic('<path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9"/>'),
+};
+ICONS.clock = ICONS.routine;
+
+const PERMISSIONS = { read: 'Read only', guard: 'Guard', full: 'Full access' };
+const LOGO = `<svg viewBox="0 0 32 32" width="22" height="22"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b7bff"/><stop offset="1" stop-color="#ff8a5c"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg)"/><path d="M16 6.5c.9 4.8 3.7 7.6 8.5 8.5-4.8.9-7.6 3.7-8.5 8.5-.9-4.8-3.7-7.6-8.5-8.5 4.8-.9 7.6-3.7 8.5-8.5z" fill="#fff"/></svg>`;
+
+// ---------------------------------------------------------------------------
+// State
+
+let settings;
+let chats = {};
+let chat = null; // current chat
+let controller = null;
+let run = null; // the running task: { idx, agentTabs, lastAgentFocus, paused, pauseReason, resume, steer }
+let queue = []; // follow-ups waiting for the current task to finish
+let includePage = true;
+let pageInfo = null;
+let windowId = null;
+chrome.windows.getCurrent().then((w) => (windowId = w.id), () => {});
+
+// ---------------------------------------------------------------------------
+// Shell
+
+const PLACEHOLDER = MODE === 'side' ? 'Ask about this page or anything…' : 'Ask anything, search the web, or enter a URL…';
+
+function shell() {
+  $('#root').innerHTML = `
+  <div class="app ${MODE}">
+    <aside class="sidebar" id="sidebar">
+      <div class="sb-head">
+        <div class="brand">${LOGO}<span>RolConnect</span></div>
+        <button class="icon-btn" id="collapseSidebar" title="Hide sidebar">${ICONS.sidebar}</button>
+      </div>
+      <button class="new-chat" id="newChat">${ICONS.plus}<span>New chat</span></button>
+      <div class="chat-list" id="chatList"></div>
+      <div class="sb-foot">
+        <button class="sb-link" id="openPanel">${ICONS.panel}<span>Open in side panel</span></button>
+        <button class="sb-link" id="openSettings">${ICONS.gear}<span>Settings</span></button>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+    <main class="main is-empty" id="main">
+      <header class="topbar">
+        <button class="icon-btn" id="showSidebar" title="Chats">${MODE === 'side' ? ICONS.menu : ICONS.sidebar}</button>
+        <div class="topbar-title" id="topTitle"></div>
+        <button class="icon-btn" id="topNew" title="New chat">${ICONS.plus}</button>
+        <button class="icon-btn" id="topSettings" title="Settings">${ICONS.gear}</button>
+      </header>
+      <div class="scroller" id="scroller">
+        <section class="hero" id="hero">
+          <div class="clock" id="clock"></div>
+          <h1 class="greeting" id="greeting"></h1>
+        </section>
+        <div class="thread" id="thread"></div>
+      </div>
+      <div class="composer-wrap">
+        <form class="composer" id="composer">
+          <div class="ctx-row" id="ctxRow"></div>
+          <div class="queue-row" id="queueRow"></div>
+          <textarea id="input" rows="1" placeholder="${PLACEHOLDER}" autocomplete="off"></textarea>
+          <div class="composer-bar">
+            <div class="model-wrap">
+              <button type="button" class="model-pill" id="modelPill"></button>
+              <div class="popover" id="modelMenu" hidden></div>
+            </div>
+            <div class="model-wrap" id="effortWrap" hidden>
+              <button type="button" class="model-pill effort-pill" id="effortPill" title="Thinking effort"></button>
+              <div class="popover effort-menu" id="effortMenu" hidden></div>
+            </div>
+            <div class="model-wrap">
+              <button type="button" class="model-pill perm-pill" id="permPill" title="Permissions"></button>
+              <div class="popover perm-menu" id="permMenu" hidden></div>
+            </div>
+            <span class="spacer"></span>
+            <button type="button" class="pause-btn" id="pauseBtn" title="Pause and take over" hidden>${ICONS.pause}</button>
+            <button type="submit" class="send-btn" id="sendBtn" title="Send (Enter)">${ICONS.send}</button>
+          </div>
+        </form>
+        <div class="suggestions" id="suggestions"></div>
+      </div>
+    </main>
+    <div class="modal" id="settingsModal" hidden></div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+
+function favicon(url) {
+  return chrome.runtime.getURL(`/_favicon/?pageUrl=${encodeURIComponent(url)}&size=32`);
+}
+function hostOf(u) {
+  try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; }
+}
+function applyTheme() {
+  document.documentElement.dataset.theme = settings.theme === 'system' ? '' : settings.theme;
+}
+function autosize() {
+  const ta = $('#input');
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 220) + 'px';
+}
+function scrollToBottom(force = false) {
+  const sc = $('#scroller');
+  const near = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 160;
+  if (force || near) sc.scrollTop = sc.scrollHeight;
+}
+function toast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.classList.add('show'), 10);
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 2600);
+}
+
+function tickClock() {
+  const now = new Date();
+  $('#clock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const h = now.getHours();
+  const part = h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  $('#greeting').textContent = MODE === 'side' ? 'What can I help with on this page?' : `${part}. What are we looking into?`;
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar / chats
+
+function renderChatList() {
+  const list = Object.values(chats).sort((a, b) => b.updated - a.updated);
+  const groups = {};
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  for (const c of list) {
+    const g = c.updated >= startOfDay ? 'Today' : c.updated >= startOfDay - 86400000 ? 'Yesterday' : c.updated >= startOfDay - 7 * 86400000 ? 'Previous 7 days' : 'Older';
+    (groups[g] ||= []).push(c);
+  }
+  $('#chatList').innerHTML = list.length
+    ? Object.entries(groups)
+        .map(([g, cs]) => `<div class="cl-group">${g}</div>` + cs
+          .map((c) => `<div class="cl-item ${chat?.id === c.id ? 'active' : ''}" data-id="${c.id}">${c.routineId ? `<span class="cl-ic" title="Routine">${ICONS.routine}</span>` : ''}<span>${esc(c.title || 'New chat')}</span><button class="cl-del" data-del="${c.id}" title="Delete">${ICONS.trash}</button></div>`)
+          .join(''))
+        .join('')
+    : '<div class="cl-empty">Your chats will show up here.</div>';
+}
+
+function openChat(id) {
+  if (controller) return;
+  chat = chats[id] || null;
+  renderThread();
+  renderChatList();
+  closeSidebarOverlay();
+}
+
+function newChat() {
+  if (controller) controller.abort();
+  queue = [];
+  renderQueue();
+  chat = null;
+  renderThread();
+  renderChatList();
+  closeSidebarOverlay();
+  $('#input').focus();
+}
+
+function closeSidebarOverlay() {
+  $('.app').classList.remove('sidebar-open');
+}
+
+// ---------------------------------------------------------------------------
+// Thread rendering
+
+function stepSummary(steps) {
+  const n = (k) => steps.filter((s) => s.kind === k).length;
+  const parts = [];
+  if (n('search')) parts.push(`Searched ${n('search')}×`);
+  if (n('read')) parts.push(`read ${n('read')} page${n('read') > 1 ? 's' : ''}`);
+  const acts = n('tab') + n('click') + n('type') + n('wait');
+  if (acts) parts.push(`${acts} browser action${acts > 1 ? 's' : ''}`);
+  if (n('memory')) parts.push('updated memory');
+  if (n('routine')) parts.push('scheduled a routine');
+  return parts.join(', ') || `${steps.length} step${steps.length > 1 ? 's' : ''}`;
+}
+
+function renderSteps(m, idx) {
+  if (!m.steps?.length) return '';
+  const running = m.status === 'running';
+  const paused = running && run?.idx === idx && run.paused;
+  const state = paused ? 'Paused' : m.waiting ? 'Waiting for your approval' : 'Working…';
+  const icon = paused ? ICONS.pause : m.waiting ? ICONS.approval : '<span class="spinner"></span>';
+  return `<details class="activity" ${running || m.showSteps ? 'open' : ''}>
+    <summary>${running ? icon : ICONS.check}<span>${running ? state : esc(stepSummary(m.steps))}</span>${ICONS.chevron}</summary>
+    <ol class="steps">${m.steps
+      .map((s) => `<li class="step ${s.status} k-${s.kind}">
+        <span class="step-ic">${s.status === 'running' ? '<span class="spinner"></span>' : s.status === 'error' ? ICONS.x : ICONS[s.kind] || ICONS.think}</span>
+        <span class="step-body"><span class="step-label">${esc(s.kind === 'think' ? s.label.slice(0, 400) : s.label)}</span>${s.detail ? `<span class="step-detail">${esc(String(s.detail).slice(0, 200))}</span>` : ''}</span>
+      </li>`)
+      .join('')}</ol>
+  </details>`;
+}
+
+function renderSources(m) {
+  if (!m.sources?.length) return '';
+  const shown = m.sources.slice(0, 8);
+  return `<div class="sources">${shown
+    .map((s) => `<a class="source" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" title="${esc(s.title || s.url)}">
+      <img src="${esc(favicon(s.url))}" alt="" width="14" height="14"><span>${esc(hostOf(s.url))}</span></a>`)
+    .join('')}${m.sources.length > shown.length ? `<span class="source more">+${m.sources.length - shown.length}</span>` : ''}</div>`;
+}
+
+function messageHTML(m, idx) {
+  if (m.role === 'user') {
+    return `<div class="msg user" data-idx="${idx}"><div class="bubble">${esc(m.text)}</div></div>`;
+  }
+  const meta = m.provider ? `${PROVIDERS[m.provider]?.label || m.provider} · ${m.model}` : '';
+  const body = m.error
+    ? `<div class="error-card"><strong>Something went wrong.</strong><div>${esc(m.error)}</div></div>`
+    : m.text
+      ? `<div class="md">${renderMarkdown(m.text)}</div>`
+      : m.status === 'running' && !m.steps?.length
+        ? '<div class="typing"><span></span><span></span><span></span></div>'
+        : '';
+  const paused = m.status === 'running' && run?.idx === idx && run.paused;
+  return `<div class="msg assistant ${m.status === 'running' ? 'running' : ''}" data-idx="${idx}">
+    <div class="avatar">${LOGO}</div>
+    <div class="msg-main">
+      ${renderSteps(m, idx)}
+      ${paused ? `<div class="paused-card">${ICONS.pause}<span>${esc(run.pauseReason)}</span><button type="button" class="btn primary small act" data-act="resume">${ICONS.play}Resume</button></div>` : ''}
+      ${renderSources(m)}
+      ${body}
+      <div class="confirm-slot"></div>
+      ${m.status !== 'running' ? `<div class="msg-actions">
+        ${m.text ? `<button class="act" data-act="copy" title="Copy">${ICONS.copy}</button>` : ''}
+        <button class="act" data-act="retry" title="Regenerate">${ICONS.retry}</button>
+        <span class="meta">${esc(meta)}</span>
+      </div>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderThread() {
+  const msgs = chat?.messages || [];
+  $('#main').classList.toggle('is-empty', !msgs.length);
+  $('#thread').innerHTML = msgs.map(messageHTML).join('');
+  $('#topTitle').textContent = chat?.title || (MODE === 'side' ? 'RolConnect' : '');
+  renderSuggestions();
+  scrollToBottom(true);
+}
+
+function rerenderMessage(idx) {
+  const el = $(`.msg[data-idx="${idx}"]`);
+  if (!el) return renderThread();
+  const confirmEl = $('.confirm-slot', el)?.firstElementChild;
+  const m = chat.messages[idx];
+  const tmp = document.createElement('div');
+  tmp.innerHTML = messageHTML(m, idx);
+  const fresh = tmp.firstElementChild;
+  if (confirmEl) $('.confirm-slot', fresh).appendChild(confirmEl);
+  el.replaceWith(fresh);
+  scrollToBottom();
+}
+
+const SUGGESTIONS = {
+  newtab: [
+    'What happened in tech news today?',
+    'Compare the best noise-cancelling headphones right now',
+    'Summarize the tab I was just reading',
+    'Plan a 3-day trip to Lisbon with links',
+  ],
+  side: ['Summarize this page', 'What are the key takeaways?', 'Fact-check the main claims here', 'Find related articles'],
+};
+
+function renderSuggestions() {
+  const empty = !chat?.messages?.length;
+  $('#suggestions').innerHTML = empty
+    ? SUGGESTIONS[MODE].map((s) => `<button class="chip" type="button">${esc(s)}</button>`).join('')
+    : '';
+}
+
+// ---------------------------------------------------------------------------
+// Model pill + menu
+
+function renderModelPill() {
+  const key = settings.provider;
+  const p = PROVIDERS[key];
+  const model = settings.providers[key].model || 'no model';
+  const ok = isConfigured(settings);
+  $('#modelPill').innerHTML = `<span class="dot" style="background:${p.color}"></span><span class="pill-provider">${p.label}</span><span class="pill-model">${esc(model)}</span>${ok ? '' : '<span class="pill-warn">sign in</span>'}${ICONS.chevron}`;
+  renderEffortPill();
+}
+
+const EFFORT_LABEL = { default: 'Auto', none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
+
+function currentEffortOptions() {
+  return effortOptions(settings.provider, settings.providers[settings.provider]);
+}
+
+function renderEffortPill() {
+  const opts = currentEffortOptions();
+  $('#effortWrap').hidden = !opts.length || !isConfigured(settings);
+  const cur = pickEffort(chosenEffort(settings), opts) || 'default';
+  $('#effortPill').innerHTML = `${ICONS.gauge}<span class="pill-provider">Effort</span><span class="pill-model">${EFFORT_LABEL[cur] || cur}</span>${ICONS.chevron}`;
+  renderPermPill();
+}
+
+function renderPermPill() {
+  const p = settings.permission in PERMISSIONS ? settings.permission : 'guard';
+  $('#permPill').innerHTML = `${ICONS.shield}<span class="pill-model">${PERMISSIONS[p]}</span>${ICONS.chevron}`;
+  $('#permPill').dataset.level = p;
+}
+
+function renderPermMenu() {
+  $('#permMenu').innerHTML = Object.entries(PERMISSIONS)
+    .map(([v, label]) => `<button type="button" class="mm-item ${v === settings.permission ? 'active' : ''}" data-perm="${v}">
+      <span class="mm-text"><span class="mm-name">${label}</span></span>${v === settings.permission ? ICONS.check : ''}</button>`)
+    .join('');
+}
+
+function togglePermMenu(show) {
+  const menu = $('#permMenu');
+  const open = show ?? menu.hidden;
+  if (open) { closeMenus('permMenu'); renderPermMenu(); }
+  menu.hidden = !open;
+}
+
+const MENUS = ['modelMenu', 'effortMenu', 'permMenu'];
+function closeMenus(except) {
+  MENUS.forEach((id) => id !== except && ($('#' + id).hidden = true));
+}
+
+function renderEffortMenu() {
+  const opts = currentEffortOptions();
+  const cur = pickEffort(chosenEffort(settings), opts) || 'default';
+  $('#effortMenu').innerHTML = `${['default', ...opts]
+    .map((v) => `<button type="button" class="mm-item ${v === cur ? 'active' : ''}" data-effort="${v}">
+      <span class="mm-text"><span class="mm-name">${EFFORT_LABEL[v] || v}</span></span>
+      ${v === cur ? ICONS.check : ''}</button>`)
+    .join('')}`;
+}
+
+function toggleEffortMenu(show) {
+  const menu = $('#effortMenu');
+  const open = show ?? menu.hidden;
+  if (open) { closeMenus('effortMenu'); renderEffortMenu(); }
+  menu.hidden = !open;
+}
+
+function modelOptions(cfg) {
+  const list = [...(cfg.models || [])];
+  if (cfg.model && !list.includes(cfg.model)) list.unshift(cfg.model);
+  if (!list.length) return `<option value="" disabled selected>${cfg.apiKey ? 'No models loaded yet' : 'Add your API key to load models'}</option>`;
+  return list.map((m) => `<option value="${esc(m)}" ${m === cfg.model ? 'selected' : ''}>${esc(m)}</option>`).join('');
+}
+
+function renderModelMenu() {
+  const items = Object.entries(PROVIDERS)
+    .map(([key, p]) => {
+      const cfg = settings.providers[key];
+      const ok = isConfigured(settings, key);
+      return `<button type="button" class="mm-item ${settings.provider === key ? 'active' : ''}" data-provider="${key}">
+        <span class="dot" style="background:${p.color}"></span>
+        <span class="mm-text"><span class="mm-name">${p.label}</span>${ok ? '' : '<span class="mm-sub">Not connected</span>'}</span>
+        ${settings.provider === key ? ICONS.check : ''}
+      </button>`;
+    })
+    .join('');
+  const cfg = settings.providers[settings.provider];
+  $('#modelMenu').innerHTML = `
+    <div class="mm-title">Provider</div>${items}
+    <div class="mm-title">Model</div>
+    <div class="mm-model">
+      <select id="mmModel">${modelOptions(cfg)}</select>
+    </div>
+    <button type="button" class="mm-manage" id="mmManage">${ICONS.key}<span>Manage accounts & settings</span></button>`;
+}
+
+function toggleModelMenu(show) {
+  const menu = $('#modelMenu');
+  const open = show ?? menu.hidden;
+  if (open) { closeMenus('modelMenu'); renderModelMenu(); }
+  menu.hidden = !open;
+}
+
+// ---------------------------------------------------------------------------
+// Context row (side panel: current page chip)
+
+async function refreshPageInfo() {
+  if (MODE !== 'side') return;
+  pageInfo = await currentPageInfo();
+  const row = $('#ctxRow');
+  if (!pageInfo) { row.innerHTML = ''; return; }
+  const img = `<img src="${esc(favicon(pageInfo.url))}" width="14" height="14" alt="">`;
+  row.innerHTML = includePage
+    ? `<div class="ctx-chip on" title="${esc(pageInfo.url)}">${img}<span class="ctx-title">${esc(pageInfo.title || hostOf(pageInfo.url))}</span><span class="ctx-host">${esc(hostOf(pageInfo.url))}</span><button type="button" class="ctx-x" data-ctx="remove" title="Remove page">${ICONS.x}</button></div>`
+    : `<button type="button" class="ctx-chip" data-ctx="add" title="Attach this page">${img}<span class="ctx-title">${esc(pageInfo.title || hostOf(pageInfo.url))}</span>${ICONS.plus}</button>`;
+}
+
+function renderQueue() {
+  $('#queueRow').innerHTML = queue
+    .map((q, i) => `<div class="queued"><span class="q-label">Queued</span><span class="q-text">${esc(q)}</span><button type="button" class="ctx-x" data-unqueue="${i}" title="Remove">${ICONS.x}</button></div>`)
+    .join('');
+}
+
+// ---------------------------------------------------------------------------
+// Confirmation card for browser actions
+
+function confirmAction(idx, text) {
+  return new Promise((resolve) => {
+    const slot = $(`.msg[data-idx="${idx}"] .confirm-slot`);
+    if (!slot) return resolve(false);
+    const m = chat.messages[idx];
+    m.waiting = true;
+    rerenderMessage(idx);
+    const card = document.createElement('div');
+    card.className = 'confirm-card';
+    card.innerHTML = `<div class="cc-text"><strong>Approve this action?</strong><span>${esc(text)}</span></div>
+      <div class="cc-btns"><button type="button" class="btn ghost" data-v="0">Deny</button><button type="button" class="btn primary" data-v="1">Approve</button></div>`;
+    $(`.msg[data-idx="${idx}"] .confirm-slot`).appendChild(card);
+    scrollToBottom(true);
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      card.remove();
+      m.waiting = false;
+      rerenderMessage(idx);
+      resolve(v);
+    };
+    card.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-v]');
+      if (b) done(b.dataset.v === '1');
+    });
+    controller?.signal.addEventListener('abort', () => done(false), { once: true });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Sending
+
+function looksLikeUrl(s) {
+  return /^(https?:\/\/)?([\w-]+\.)+[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(s) && !/\s/.test(s);
+}
+
+// While a task runs, the send button stops it (empty box) or steers / queues a follow-up (text typed).
+function updateSendBtn() {
+  const running = !!controller;
+  const hasText = !!$('#input').value.trim();
+  const stop = running && !hasText;
+  const queueMode = settings.followUp === 'queue';
+  $('#sendBtn').innerHTML = stop ? ICONS.stop : ICONS.send;
+  $('#sendBtn').classList.toggle('stop', stop);
+  $('#sendBtn').title = stop ? 'Stop' : running ? (queueMode ? 'Queue' : 'Steer') : 'Send (Enter)';
+  $('#input').placeholder = running ? (queueMode ? 'Queue a follow-up…' : 'Steer the agent…') : PLACEHOLDER;
+  $('#pauseBtn').hidden = !running;
+  $('#pauseBtn').innerHTML = run?.paused ? ICONS.play : ICONS.pause;
+  $('#pauseBtn').title = run?.paused ? 'Resume' : 'Pause and take over';
+  $('#pauseBtn').classList.toggle('on', !!run?.paused);
+}
+const setRunning = updateSendBtn;
+
+function pauseRun(reason) {
+  if (!run || run.paused) return;
+  run.paused = true;
+  run.pauseReason = reason;
+  rerenderMessage(run.idx);
+  updateSendBtn();
+}
+
+function resumeRun() {
+  if (!run?.paused) return;
+  run.paused = false;
+  const r = run.resume;
+  run.resume = null;
+  rerenderMessage(run.idx);
+  updateSendBtn();
+  r?.();
+}
+
+function followUp(text) {
+  $('#input').value = '';
+  autosize();
+  if (settings.followUp === 'queue' || !run) {
+    queue.push(text);
+    renderQueue();
+  } else {
+    run.steer.push(text);
+    const am = chat.messages[run.idx];
+    am.steps.push({ kind: 'steer', label: text, status: 'running' });
+    rerenderMessage(run.idx);
+    if (run.paused) resumeRun();
+  }
+  updateSendBtn();
+}
+
+async function send(text, { regenerate = false } = {}) {
+  text = text.trim();
+  if (!text || controller) return;
+
+  if (MODE === 'newtab' && !regenerate && looksLikeUrl(text)) {
+    location.href = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+    return;
+  }
+  if (!isConfigured(settings)) {
+    openSettings(settings.provider);
+    toast(`Connect ${PROVIDERS[settings.provider].label} first.`);
+    return;
+  }
+
+  if (!chat) {
+    chat = { id: uid(), title: text.slice(0, 60), created: Date.now(), updated: Date.now(), messages: [] };
+    chats[chat.id] = chat;
+  }
+
+  const msgs = chat.messages;
+  const history = buildHistory(msgs);
+
+  if (!regenerate) msgs.push({ role: 'user', text, ts: Date.now() });
+  const am = {
+    role: 'assistant', text: '', steps: [], sources: [], status: 'running',
+    provider: settings.provider, model: settings.providers[settings.provider].model, ts: Date.now(),
+  };
+  msgs.push(am);
+  const idx = msgs.length - 1;
+  $('#input').value = '';
+  autosize();
+  renderThread();
+  renderChatList();
+
+  controller = new AbortController();
+  const signal = controller.signal;
+  run = { idx, agentTabs: new Set(), lastAgentFocus: 0, paused: false, pauseReason: '', resume: null, steer: [] };
+  const thisRun = run;
+  setRunning(true);
+
+  const seen = new Set();
+  const ui = {
+    // Holds the agent before its next step while the user has paused it.
+    gate: () => (thisRun.paused && !signal.aborted
+      ? new Promise((res) => { thisRun.resume = res; signal.addEventListener('abort', res, { once: true }); })
+      : Promise.resolve()),
+    takeSteer() {
+      if (!thisRun.steer.length) return [];
+      const out = thisRun.steer.splice(0);
+      am.steers = [...(am.steers || []), ...out];
+      am.steps.forEach((s) => s.kind === 'steer' && s.status === 'running' && (s.status = 'done'));
+      rerenderMessage(idx);
+      return out;
+    },
+    step(s) {
+      am.steps.push({ ...s });
+      rerenderMessage(idx);
+      return am.steps.length - 1;
+    },
+    updateStep(i, patch) {
+      Object.assign(am.steps[i], patch);
+      rerenderMessage(idx);
+    },
+    source(s) {
+      if (!s?.url || seen.has(s.url)) return;
+      seen.add(s.url);
+      am.sources.push({ title: s.title || s.url, url: s.url });
+      rerenderMessage(idx);
+    },
+    text(t) {
+      am.text = t;
+      rerenderMessage(idx);
+    },
+    confirm: (desc) => confirmAction(idx, desc),
+  };
+
+  if (MODE === 'side') await refreshPageInfo();
+  const thisChat = chat;
+  try {
+    const memories = settings.memory?.enabled ? await getMemories(settings) : [];
+    const out = await runAgent({
+      settings,
+      history,
+      userText: text,
+      ui,
+      signal,
+      mode: MODE,
+      pageInfo: MODE === 'side' && includePage ? pageInfo : null,
+      sessionId: thisChat.id,
+      memories,
+      run: thisRun,
+    });
+    am.text = out || am.text || '_(No answer returned.)_';
+  } catch (e) {
+    if (e.name === 'AbortError') am.text = (am.text ? am.text + '\n\n' : '') + '_Stopped._';
+    else am.error = e.message || String(e);
+  } finally {
+    // Follow-ups the agent never got to read run next, as their own messages.
+    const leftover = thisRun.steer.splice(0);
+    am.steps = am.steps.filter((s) => !(s.kind === 'steer' && s.status === 'running'));
+    am.status = 'done';
+    am.waiting = false;
+    am.steps.forEach((s) => s.status === 'running' && (s.status = 'error'));
+    controller = null;
+    run = null;
+    if (!signal.aborted || chat === thisChat) queue.unshift(...leftover);
+    setRunning(false);
+    thisChat.updated = Date.now();
+    if (chat === thisChat) rerenderMessage(idx);
+    renderChatList();
+    saveChat(thisChat).catch((err) => toast('Could not save chat: ' + err.message));
+    renderQueue();
+    if (queue.length && chat === thisChat && !signal.aborted) setTimeout(() => { if (!controller && queue.length) { const q = queue.shift(); renderQueue(); send(q); } }, 0);
+  }
+}
+
+function regenerate() {
+  if (!chat || controller) return;
+  const msgs = chat.messages;
+  if (msgs[msgs.length - 1]?.role === 'assistant') msgs.pop();
+  const lastUser = msgs[msgs.length - 1];
+  if (lastUser?.role === 'user') send(lastUser.text, { regenerate: true });
+}
+
+// ---------------------------------------------------------------------------
+// Settings modal
+
+function providerPane(key) {
+  const p = PROVIDERS[key];
+  const cfg = settings.providers[key];
+  return `<div class="pane" data-pane="${key}">
+    ${p.keyUrl ? `<a class="btn signin" href="${p.keyUrl}" target="_blank" rel="noopener">${ICONS.external}<span>Sign in to ${esc(p.vendor)} & get a key</span></a>` : ''}
+    <label class="field"><span>API key</span>
+      <div class="key-row"><input data-f="apiKey" type="password" value="${esc(cfg.apiKey || '')}" placeholder="${esc(p.keyHint)}" spellcheck="false" autocomplete="off">
+      <button type="button" class="btn ghost small" data-showkey>Show</button></div>
+    </label>
+    <label class="field"><span>Model</span>
+      <div class="key-row"><select data-f="model">${modelOptions(cfg)}</select>
+      <button type="button" class="btn ghost small" data-loadmodels title="Reload the model list">Refresh</button></div>
+    </label>
+    <div class="pane-actions">
+      <button type="button" class="btn primary" data-use>Use ${esc(p.label)}</button>
+      <span class="status" data-status></span>
+    </div>
+  </div>`;
+}
+
+function openSettings(tab = settings.provider) {
+  const m = $('#settingsModal');
+  m.innerHTML = `<div class="dialog" role="dialog" aria-label="Settings">
+    <div class="dlg-head"><h2>Settings</h2><button class="icon-btn" data-close title="Close">${ICONS.x}</button></div>
+    <div class="dlg-body">
+      <h3>Accounts</h3>
+      <div class="tabs">${Object.entries(PROVIDERS)
+        .map(([k, p]) => `<button type="button" class="tab ${k === tab ? 'active' : ''}" data-tab="${k}"><span class="dot" style="background:${p.color}"></span>${p.label}${isConfigured(settings, k) ? '<span class="ok">●</span>' : ''}</button>`)
+        .join('')}</div>
+      <div class="panes">${Object.keys(PROVIDERS).map(providerPane).join('')}</div>
+
+      <h3>Agent</h3>
+      <label class="field row"><span>Permissions</span>
+        <select data-g="permission">${Object.entries(PERMISSIONS).map(([v, l]) => `<option value="${v}" ${settings.permission === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="field row"><span>Messages sent while it works</span>
+        <select data-g="followUp"><option value="steer" ${settings.followUp !== 'queue' ? 'selected' : ''}>Steer</option><option value="queue" ${settings.followUp === 'queue' ? 'selected' : ''}>Queue</option></select></label>
+      <label class="field row"><span>Use the provider's built-in web search</span>
+        <input type="checkbox" class="switch" data-g="nativeSearch" ${settings.nativeSearch ? 'checked' : ''}></label>
+
+      <h3>Memory</h3>
+      <label class="field row"><span>Memory</span>
+        <input type="checkbox" class="switch" data-m="enabled" ${settings.memory.enabled ? 'checked' : ''}></label>
+      <label class="field row"><span>Use browsing history</span>
+        <input type="checkbox" class="switch" data-m="history" ${settings.memory.history ? 'checked' : ''}></label>
+      <label class="field row"><span>Keep task memories</span>
+        <select data-m="retention">${[['never', 'Never forget'], ['30d', '30 days'], ['90d', '90 days']]
+          .map(([v, l]) => `<option value="${v}" ${settings.memory.retention === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <div class="mem-list" id="memList"></div>
+      <div class="key-row mem-add"><input id="memNew" placeholder="Add a memory" autocomplete="off">
+        <button type="button" class="btn ghost small" data-memadd>Add</button></div>
+
+      <h3>Routines</h3>
+      <div class="routine-list" id="routineList"></div>
+      <div id="routineForm"></div>
+      <button type="button" class="btn ghost small" data-rnew>${ICONS.plus}<span>New routine</span></button>
+
+      <h3>Appearance & data</h3>
+      <label class="field row"><span>Theme</span>
+        <select data-g="theme">${['system', 'light', 'dark'].map((v) => `<option ${settings.theme === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      <div class="field row"><span>Chat history</span>
+        <button type="button" class="btn danger small" data-clear>Delete all chats</button></div>
+    </div>
+  </div>`;
+  m.hidden = false;
+  showPane(tab);
+  renderMemories();
+  renderRoutines();
+  // Fill in model lists for accounts that have a key but no list yet.
+  for (const k of Object.keys(PROVIDERS)) {
+    const c = settings.providers[k];
+    if (c.apiKey && (!(c.models || []).length || (k !== 'openai' && !c.efforts))) loadModels(k);
+  }
+}
+
+function refreshTabDots() {
+  $$('#settingsModal .tab').forEach((t) => {
+    const on = isConfigured(settings, t.dataset.tab);
+    const dot = $('.ok', t);
+    if (on && !dot) t.insertAdjacentHTML('beforeend', '<span class="ok">●</span>');
+    if (!on && dot) dot.remove();
+  });
+}
+
+// Load the provider's model list (runs automatically when a key is entered).
+const loadSeq = {};
+async function loadModels(key) {
+  const cfg = settings.providers[key];
+  const pane = () => $(`#settingsModal .pane[data-pane="${key}"]`);
+  const setStatus = (cls, text) => {
+    const s = pane() && $('[data-status]', pane());
+    if (s) { s.className = `status ${cls}`; s.textContent = text; }
+  };
+  if (!cfg.apiKey) { setStatus('', ''); return false; }
+  const seq = (loadSeq[key] = (loadSeq[key] || 0) + 1);
+  setStatus('', 'Loading models…');
+  let ok = false;
+  try {
+    const models = await listModels(key, cfg);
+    if (seq !== loadSeq[key]) return false; // a newer load (newer key) won
+    cfg.models = models;
+    if (!models.includes(cfg.model)) {
+      const def = PROVIDERS[key].defaultModel;
+      cfg.model = models.includes(def) ? def : models[0] || '';
+    }
+    setStatus('good', `Connected · ${models.length} models`);
+    // First connected account: start using it right away.
+    if (!isConfigured(settings, settings.provider) && isConfigured(settings, key)) settings.provider = key;
+    ok = true;
+  } catch (err) {
+    if (seq !== loadSeq[key]) return false;
+    setStatus('bad', err.message);
+  }
+  await saveSettings(settings);
+  const p = pane();
+  if (p) {
+    $('[data-f="model"]', p).innerHTML = modelOptions(cfg);
+    refreshTabDots();
+  }
+  renderModelPill();
+  return ok;
+}
+
+// ---- Memory (Settings) ----
+
+async function renderMemories() {
+  const el = $('#memList');
+  if (!el) return;
+  const list = (await getMemories(settings)).sort((a, b) => (b.updated || b.created) - (a.updated || a.created));
+  el.innerHTML = list
+    .map((m) => `<div class="mem-item" data-mid="${esc(m.id)}">
+      <span class="mem-kind ${m.kind === 'episodic' ? 'task' : ''}">${m.kind === 'episodic' ? 'Task' : 'Fact'}</span>
+      <input class="mem-text" value="${esc(m.text)}" spellcheck="false">
+      <button type="button" class="icon-btn" data-memdel="${esc(m.id)}" title="Forget">${ICONS.trash}</button></div>`)
+    .join('');
+}
+
+async function updateMemories(fn) {
+  await saveMemories(fn(await getMemories(settings)));
+  renderMemories();
+}
+
+// ---- Routines (Settings) ----
+
+const fmtWhen = (ts) => new Date(ts).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+async function renderRoutines() {
+  const el = $('#routineList');
+  if (!el) return;
+  const list = Object.values(await getRoutines()).sort((a, b) => a.created - b.created);
+  el.innerHTML = list
+    .map((r) => `<div class="routine ${r.active ? '' : 'paused'}" data-rid="${esc(r.id)}">
+      <div class="r-head">
+        <div class="r-main"><span class="r-name">${esc(r.name)}</span>
+          <span class="r-sched">${esc(describeSchedule(r.schedule))}${r.kind === 'heartbeat' ? ' · same chat' : ''} · ${r.active ? (r.nextRun ? `next ${esc(fmtWhen(r.nextRun))}` : 'scheduled') : 'paused'}</span></div>
+        <div class="r-btns">
+          <button type="button" class="btn ghost small" data-rrun>Run now</button>
+          <button type="button" class="btn ghost small" data-rtoggle>${r.active ? 'Pause' : 'Resume'}</button>
+          <button type="button" class="btn ghost small" data-redit>Edit</button>
+          <button type="button" class="icon-btn" data-rdel title="Delete">${ICONS.trash}</button>
+        </div>
+      </div>
+      ${r.runs?.length ? `<div class="r-runs">${r.runs.slice(0, 5)
+        .map((x) => `<button type="button" class="r-run s-${esc(String(x.status).replace(/\s+/g, '-'))}" ${x.chatId ? `data-rchat="${esc(x.chatId)}"` : 'disabled'} title="${esc(x.note || '')}">${esc(fmtWhen(x.ts))} · ${esc(x.status)}</button>`)
+        .join('')}</div>` : ''}
+    </div>`)
+    .join('');
+}
+
+function routineForm(r) {
+  const s = normalizeSchedule(r?.schedule || { type: 'daily', time: '09:00' });
+  const opt = (v, l, cur) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${l}</option>`;
+  return `<div class="routine-form" data-rform="${esc(r?.id || '')}">
+    <label class="field"><span>Name</span><input data-r="name" value="${esc(r?.name || '')}" autocomplete="off"></label>
+    <label class="field"><span>Instructions</span><textarea data-r="instructions" rows="3">${esc(r?.instructions || '')}</textarea></label>
+    <div class="field"><span>Schedule</span>
+      <div class="key-row r-sched-row">
+        <select data-r="type">${opt('interval', 'Every…', s.type)}${opt('daily', 'Daily', s.type)}${opt('weekdays', 'Weekdays', s.type)}${opt('weekly', 'Weekly', s.type)}</select>
+        <select data-r="day" ${s.type === 'weekly' ? '' : 'hidden'}>${DAYS.map((d, i) => opt(i, d, s.day ?? 1)).join('')}</select>
+        <input data-r="time" type="time" value="${s.time || '09:00'}" ${s.type === 'interval' ? 'hidden' : ''}>
+        <select data-r="minutes" ${s.type === 'interval' ? '' : 'hidden'}>${[[15, '15 minutes'], [30, '30 minutes'], [60, 'hour'], [120, '2 hours'], [180, '3 hours'], [360, '6 hours'], [720, '12 hours']]
+          .map(([v, l]) => opt(v, l, s.minutes || 60)).join('')}</select>
+      </div>
+    </div>
+    <div class="pane-actions"><button type="button" class="btn primary small" data-rsave>Save</button><button type="button" class="btn ghost small" data-rcancel>Cancel</button><span class="status" data-rstatus></span></div>
+  </div>`;
+}
+
+async function saveRoutineForm(form) {
+  const v = (k) => $(`[data-r="${k}"]`, form).value.trim();
+  const name = v('name');
+  const instructions = v('instructions');
+  if (!name || !instructions) {
+    const s = $('[data-rstatus]', form);
+    s.className = 'status bad';
+    s.textContent = 'Add a name and instructions.';
+    return;
+  }
+  const schedule = normalizeSchedule({ type: v('type'), time: v('time'), day: v('day'), minutes: v('minutes') });
+  const existing = form.dataset.rform ? (await getRoutines())[form.dataset.rform] : null;
+  const r = existing
+    ? { ...existing, name, instructions, schedule, nextRun: existing.active ? nextRunTime(schedule) : existing.nextRun }
+    : { id: 'r' + uid(), name, instructions, kind: 'cron', schedule, active: true, created: Date.now(), nextRun: nextRunTime(schedule), runs: [] };
+  await saveRoutine(r);
+  $('#routineForm').innerHTML = '';
+  renderRoutines();
+}
+
+function showPane(key) {
+  $$('#settingsModal .tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === key));
+  $$('#settingsModal .pane').forEach((p) => (p.hidden = p.dataset.pane !== key));
+}
+
+const loadTimers = {};
+
+function bindSettings() {
+  const m = $('#settingsModal');
+  m.addEventListener('click', async (e) => {
+    if (e.target === m || e.target.closest('[data-close]')) { m.hidden = true; renderModelPill(); return; }
+    const tab = e.target.closest('[data-tab]');
+    if (tab) return showPane(tab.dataset.tab);
+
+    // Memory
+    if (e.target.closest('[data-memadd]')) {
+      const inp = $('#memNew');
+      const text = inp.value.trim();
+      if (!text) return;
+      inp.value = '';
+      return updateMemories((l) => [...l, { id: 'm' + uid(), text, kind: 'core', created: Date.now(), updated: Date.now() }]);
+    }
+    const memDel = e.target.closest('[data-memdel]');
+    if (memDel) return updateMemories((l) => l.filter((x) => x.id !== memDel.dataset.memdel));
+
+    // Routines
+    if (e.target.closest('[data-rnew]')) {
+      $('#routineForm').innerHTML = routineForm(null);
+      return $('#routineForm [data-r="name"]').focus();
+    }
+    if (e.target.closest('[data-rcancel]')) { $('#routineForm').innerHTML = ''; return; }
+    if (e.target.closest('[data-rsave]')) return saveRoutineForm(e.target.closest('.routine-form'));
+    const rchat = e.target.closest('[data-rchat]');
+    if (rchat) {
+      chats = await getChats();
+      if (!chats[rchat.dataset.rchat]) return toast('That chat was deleted.');
+      m.hidden = true;
+      renderModelPill();
+      return openChat(rchat.dataset.rchat);
+    }
+    const rEl = e.target.closest('[data-rid]');
+    if (rEl) {
+      const id = rEl.dataset.rid;
+      const r = (await getRoutines())[id];
+      if (!r) return renderRoutines();
+      if (e.target.closest('[data-rrun]')) {
+        const res = await chrome.runtime.sendMessage({ type: 'runRoutine', id }).catch((err) => ({ ok: false, error: err.message }));
+        toast(res?.ok ? `Running “${r.name}”` : res?.error || 'Could not start the routine.');
+        return renderRoutines();
+      }
+      if (e.target.closest('[data-rtoggle]')) {
+        await saveRoutine({ ...r, active: !r.active, nextRun: !r.active ? nextRunTime(r.schedule) : r.nextRun });
+        return renderRoutines();
+      }
+      if (e.target.closest('[data-redit]')) { $('#routineForm').innerHTML = routineForm(r); return; }
+      if (e.target.closest('[data-rdel]')) {
+        if (!confirm(`Delete the routine “${r.name}”?`)) return;
+        await deleteRoutine(id);
+        return renderRoutines();
+      }
+    }
+
+    const pane = e.target.closest('.pane');
+    if (e.target.closest('[data-showkey]')) {
+      const inp = $('[data-f="apiKey"]', pane);
+      inp.type = inp.type === 'password' ? 'text' : 'password';
+      e.target.closest('[data-showkey]').textContent = inp.type === 'password' ? 'Show' : 'Hide';
+      return;
+    }
+    if (e.target.closest('[data-loadmodels]')) return loadModels(pane.dataset.pane);
+    if (e.target.closest('[data-use]')) {
+      const key = pane.dataset.pane;
+      const cfg = settings.providers[key];
+      if (!isConfigured(settings, key)) {
+        const s = $('[data-status]', pane);
+        s.className = 'status bad';
+        s.textContent = cfg.apiKey ? 'Pick a model first.' : 'Add your API key first.';
+        return;
+      }
+      settings.provider = key;
+      renderModelPill();
+      toast(`Using ${PROVIDERS[key].label} · ${cfg.model}`);
+      return saveSettings(settings);
+    }
+    if (e.target.closest('[data-clear]')) {
+      if (!confirm('Delete all chats? This cannot be undone.')) return;
+      await clearChats();
+      chats = {};
+      newChat();
+      toast('All chats deleted.');
+    }
+  });
+
+  // Memory edits save when the field loses focus.
+  m.addEventListener('change', (e) => {
+    const t = e.target.closest('.mem-text');
+    if (!t) return;
+    const id = t.closest('[data-mid]').dataset.mid;
+    const text = t.value.trim();
+    updateMemories((l) => (text ? l.map((x) => (x.id === id ? { ...x, text, updated: Date.now() } : x)) : l.filter((x) => x.id !== id)));
+  });
+
+  m.addEventListener('input', (e) => {
+    const f = e.target.dataset.f;
+    const g = e.target.dataset.g;
+    const mk = e.target.dataset.m;
+    if (e.target.dataset.r === 'type') {
+      const form = e.target.closest('.routine-form');
+      const type = e.target.value;
+      $('[data-r="day"]', form).hidden = type !== 'weekly';
+      $('[data-r="time"]', form).hidden = type === 'interval';
+      $('[data-r="minutes"]', form).hidden = type !== 'interval';
+      return;
+    }
+    if (mk) {
+      const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+      settings.memory = { ...settings.memory, [mk]: val };
+      if (mk === 'history' && val) {
+        // Browsing history is an optional permission: ask Edge for it now (needs this click).
+        chrome.permissions.request({ permissions: ['history'] }).then((granted) => {
+          if (granted) return;
+          settings.memory = { ...settings.memory, history: false };
+          e.target.checked = false;
+          saveSettings(settings);
+        }, () => {});
+      }
+      if (mk === 'retention') getMemories(settings).then(renderMemories);
+      saveSettings(settings);
+      return;
+    }
+    if (f) {
+      const key = e.target.closest('.pane').dataset.pane;
+      settings.providers[key][f] = e.target.value.trim();
+      if (f === 'apiKey') {
+        // Auto-load the model list shortly after a key is typed or pasted.
+        clearTimeout(loadTimers[key]);
+        loadTimers[key] = setTimeout(() => loadModels(key), 600);
+      }
+      refreshTabDots();
+    } else if (g) {
+      settings[g] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+      if (g === 'theme') applyTheme();
+    } else return;
+    saveSettings(settings);
+    renderModelPill();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Events
+
+function bind() {
+  const input = $('#input');
+  input.addEventListener('input', () => { autosize(); updateSendBtn(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      // While working, Enter on an empty box does nothing (the button stops the task).
+      if (controller && !input.value.trim()) return;
+      $('#composer').requestSubmit();
+    }
+  });
+  $('#composer').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (controller) {
+      if (text) followUp(text);
+      else controller.abort();
+    } else send(input.value);
+  });
+  $('#pauseBtn').addEventListener('click', () => {
+    if (run?.paused) resumeRun();
+    else pauseRun('Paused. You have control of the browser.');
+  });
+  $('#queueRow').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-unqueue]');
+    if (!b) return;
+    queue.splice(+b.dataset.unqueue, 1);
+    renderQueue();
+  });
+  // Taking over: switching to one of the agent's tabs while it works pauses it.
+  chrome.tabs.onActivated.addListener(({ tabId }) => {
+    if (run && !run.paused && run.agentTabs.has(tabId) && Date.now() - run.lastAgentFocus > 1500) {
+      pauseRun('You took over an agent tab. Resume when you are done.');
+    }
+  });
+
+  $('#suggestions').addEventListener('click', (e) => {
+    const c = e.target.closest('.chip');
+    if (c) send(c.textContent);
+  });
+
+  $('#thread').addEventListener('click', (e) => {
+    const copyCode = e.target.closest('.copy-code');
+    if (copyCode) {
+      navigator.clipboard.writeText($('code', copyCode.parentElement).textContent);
+      copyCode.textContent = 'Copied';
+      setTimeout(() => (copyCode.textContent = 'Copy'), 1200);
+      return;
+    }
+    const act = e.target.closest('.act');
+    if (!act) return;
+    const idx = +act.closest('.msg').dataset.idx;
+    if (act.dataset.act === 'resume') return resumeRun();
+    if (act.dataset.act === 'copy') {
+      navigator.clipboard.writeText(chat.messages[idx].text);
+      toast('Copied');
+    } else if (act.dataset.act === 'retry') regenerate();
+  });
+  $('#thread').addEventListener('toggle', (e) => {
+    const d = e.target;
+    if (!d.matches?.('details.activity')) return;
+    const idx = +d.closest('.msg').dataset.idx;
+    const m = chat?.messages[idx];
+    if (m && m.status !== 'running') m.showSteps = d.open;
+  }, true);
+
+  $('#chatList').addEventListener('click', async (e) => {
+    const del = e.target.closest('[data-del]');
+    if (del) {
+      e.stopPropagation();
+      const id = del.dataset.del;
+      await deleteChat(id);
+      delete chats[id];
+      if (chat?.id === id) newChat();
+      else renderChatList();
+      return;
+    }
+    const item = e.target.closest('.cl-item');
+    if (item) openChat(item.dataset.id);
+  });
+
+  $('#newChat').addEventListener('click', newChat);
+  $('#topNew').addEventListener('click', newChat);
+  $('#openSettings').addEventListener('click', () => openSettings());
+  $('#topSettings').addEventListener('click', () => openSettings());
+  $('#openPanel').addEventListener('click', () => {
+    // Must be called synchronously inside the click (user gesture).
+    if (windowId == null) return toast('Click the RolConnect toolbar icon (or Ctrl+Shift+Y) to open the side panel.');
+    chrome.sidePanel.open({ windowId }).catch(() => toast('Click the RolConnect toolbar icon (or Ctrl+Shift+Y) to open the side panel.'));
+  });
+  $('#collapseSidebar').addEventListener('click', () => {
+    $('.app').classList.add('sidebar-collapsed');
+    $('.app').classList.remove('sidebar-open');
+    try { localStorage.setItem('rolconnect.sidebar', 'collapsed'); } catch {}
+  });
+  $('#showSidebar').addEventListener('click', () => {
+    const app = $('.app');
+    if (MODE === 'side' || window.innerWidth < 860) app.classList.toggle('sidebar-open');
+    else {
+      app.classList.remove('sidebar-collapsed');
+      try { localStorage.setItem('rolconnect.sidebar', 'open'); } catch {}
+    }
+  });
+  $('#scrim').addEventListener('click', closeSidebarOverlay);
+
+  $('#modelPill').addEventListener('click', (e) => { e.stopPropagation(); toggleModelMenu(); });
+  $('#modelMenu').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const item = e.target.closest('[data-provider]');
+    if (item) {
+      const key = item.dataset.provider;
+      if (!isConfigured(settings, key)) { toggleModelMenu(false); return openSettings(key); }
+      settings.provider = key;
+      saveSettings(settings);
+      renderModelPill();
+      renderModelMenu();
+      return;
+    }
+    if (e.target.closest('#mmManage')) { toggleModelMenu(false); openSettings(); }
+  });
+  $('#modelMenu').addEventListener('change', (e) => {
+    if (e.target.id !== 'mmModel') return;
+    settings.providers[settings.provider].model = e.target.value.trim();
+    saveSettings(settings);
+    renderModelPill();
+  });
+  $('#effortPill').addEventListener('click', (e) => { e.stopPropagation(); toggleEffortMenu(); });
+  $('#effortMenu').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const item = e.target.closest('[data-effort]');
+    if (!item) return;
+    const k = effortKey(settings.provider, settings.providers[settings.provider].model);
+    settings.effortByModel = { ...settings.effortByModel };
+    if (item.dataset.effort === 'default') delete settings.effortByModel[k];
+    else settings.effortByModel[k] = item.dataset.effort;
+    saveSettings(settings);
+    renderEffortPill();
+    toggleEffortMenu(false);
+  });
+  $('#permPill').addEventListener('click', (e) => { e.stopPropagation(); togglePermMenu(); });
+  $('#permMenu').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const item = e.target.closest('[data-perm]');
+    if (!item) return;
+    settings.permission = item.dataset.perm;
+    saveSettings(settings);
+    renderPermPill();
+    togglePermMenu(false);
+  });
+  document.addEventListener('click', () => closeMenus());
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (!$('#settingsModal').hidden) { $('#settingsModal').hidden = true; renderModelPill(); }
+      else if (MENUS.some((id) => !$('#' + id).hidden)) closeMenus();
+      else if (controller) controller.abort();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); newChat(); }
+  });
+
+  $('#ctxRow').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ctx]');
+    if (b) { includePage = b.dataset.ctx === 'add'; refreshPageInfo(); }
+  });
+
+  bindSettings();
+
+  if (MODE === 'side') {
+    chrome.tabs.onActivated.addListener(refreshPageInfo);
+    chrome.tabs.onUpdated.addListener((id, info) => { if (info.title || info.status === 'complete') refreshPageInfo(); });
+    chrome.windows.onFocusChanged.addListener(refreshPageInfo);
+    chrome.storage.session.onChanged.addListener((changes) => { if (changes.pendingPrompt?.newValue) consumePending(); });
+  }
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (changes.settings?.newValue && !controller && $('#settingsModal').hidden) {
+      getSettings().then((s) => { settings = s; applyTheme(); renderModelPill(); });
+    }
+    if (changes.chats && !controller) {
+      getChats().then((c) => { chats = c; if (chat && c[chat.id] && chat.updated < c[chat.id].updated) { chat = c[chat.id]; renderThread(); } renderChatList(); });
+    }
+    if (changes.routines && !$('#settingsModal').hidden) renderRoutines();
+    if (changes.memories && !$('#settingsModal').hidden && !document.activeElement?.matches('.mem-text')) renderMemories();
+  });
+}
+
+async function consumePending() {
+  const { pendingPrompt } = await chrome.storage.session.get('pendingPrompt');
+  if (!pendingPrompt || Date.now() - pendingPrompt.ts > 60000) return;
+  await chrome.storage.session.remove('pendingPrompt');
+  if (controller) return;
+  newChat();
+  send(pendingPrompt.text);
+}
+
+// ---------------------------------------------------------------------------
+
+async function init() {
+  shell();
+  settings = await getSettings();
+  chats = await getChats();
+  applyTheme();
+  try {
+    if (localStorage.getItem('rolconnect.sidebar') === 'collapsed' || MODE === 'side') $('.app').classList.add('sidebar-collapsed');
+  } catch {}
+  tickClock();
+  setInterval(tickClock, 15000);
+  renderModelPill();
+  renderChatList();
+  renderThread();
+  bind();
+  // Routine notifications open newtab.html#chat=<id>.
+  const fromHash = /^#chat=(.+)$/.exec(location.hash);
+  if (fromHash && chats[fromHash[1]]) openChat(fromHash[1]);
+  await refreshPageInfo();
+  if (MODE === 'side') consumePending();
+  // Refresh model lists saved before effort info existed, quietly in the background.
+  for (const k of Object.keys(PROVIDERS)) {
+    const c = settings.providers[k];
+    if (c.apiKey && (!(c.models || []).length || (k !== 'openai' && !c.efforts))) loadModels(k);
+  }
+  if (!isConfigured(settings) && !Object.keys(PROVIDERS).some((k) => isConfigured(settings, k))) {
+    setTimeout(() => openSettings('anthropic'), 300);
+  }
+  $('#input').focus();
+}
+
+init();

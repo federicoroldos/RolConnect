@@ -1,0 +1,156 @@
+// Settings + chat persistence (chrome.storage.local — never synced).
+
+export const PROVIDERS = {
+  anthropic: {
+    label: 'Claude',
+    vendor: 'Anthropic',
+    keyUrl: 'https://platform.claude.com/settings/keys',
+    keyHint: 'sk-ant-…',
+    defaultModel: 'claude-opus-5-5',
+    color: '#d97757',
+  },
+  openai: {
+    label: 'ChatGPT',
+    vendor: 'OpenAI',
+    keyUrl: 'https://platform.openai.com/api-keys',
+    keyHint: 'sk-…',
+    defaultModel: 'gpt-5.5',
+    color: '#10a37f',
+  },
+  opencode: {
+    label: 'OpenCode',
+    vendor: 'OpenCode Zen',
+    keyUrl: 'https://opencode.ai/zen',
+    keyHint: 'Zen API key',
+    defaultModel: 'claude-sonnet-5-5',
+    color: '#8b8b8b',
+  },
+  opencodego: {
+    label: 'OpenCode Go',
+    vendor: 'OpenCode Go',
+    keyUrl: 'https://opencode.ai/console/go',
+    keyHint: 'Go API key',
+    defaultModel: 'kimi-k3',
+    color: '#e8b04b',
+  },
+};
+
+const DEFAULTS = {
+  provider: 'anthropic',
+  providers: {
+    anthropic: { apiKey: '', model: PROVIDERS.anthropic.defaultModel, models: [] },
+    openai: { apiKey: '', model: PROVIDERS.openai.defaultModel, models: [] },
+    opencode: { apiKey: '', model: PROVIDERS.opencode.defaultModel, models: [], apis: {} },
+    opencodego: { apiKey: '', model: PROVIDERS.opencodego.defaultModel, models: [], apis: {} },
+  },
+  effortByModel: {},
+  nativeSearch: true,
+  permission: 'guard', // 'read' | 'guard' | 'full'
+  followUp: 'steer', // messages sent while the agent works: 'steer' | 'queue'
+  memory: { enabled: true, history: false, retention: 'never' }, // retention: 'never' | '30d' | '90d'
+  theme: 'system',
+};
+
+function merge(base, over) {
+  if (Array.isArray(base)) return Array.isArray(over) ? over : base;
+  if (base && typeof base === 'object') {
+    const out = { ...base };
+    for (const k of Object.keys(over || {})) out[k] = k in base ? merge(base[k], over[k]) : over[k];
+    return out;
+  }
+  return over === undefined ? base : over;
+}
+
+export async function getSettings() {
+  const { settings } = await chrome.storage.local.get('settings');
+  const s = merge(DEFAULTS, settings || {});
+  delete s.providers.custom; // removed provider
+  if (!PROVIDERS[s.provider]) s.provider = 'anthropic';
+  // Older versions had two toggles instead of permission levels.
+  if (!settings?.permission) s.permission = settings?.browserControl === false ? 'read' : settings?.confirmActions === false ? 'full' : 'guard';
+  delete s.browserControl;
+  delete s.confirmActions;
+  return s;
+}
+
+export async function saveSettings(settings) {
+  await chrome.storage.local.set({ settings });
+}
+
+export function isConfigured(settings, key = settings.provider) {
+  const p = settings.providers[key];
+  if (!p) return false;
+  return !!(p.apiKey && p.model);
+}
+
+// ---- chats ----
+const MAX_CHATS = 200;
+
+export async function getChats() {
+  const { chats } = await chrome.storage.local.get('chats');
+  return chats || {};
+}
+
+export async function saveChat(chat) {
+  const chats = await getChats();
+  chats[chat.id] = chat;
+  const ids = Object.keys(chats).sort((a, b) => (chats[b].updated || 0) - (chats[a].updated || 0));
+  for (const id of ids.slice(MAX_CHATS)) delete chats[id];
+  await chrome.storage.local.set({ chats });
+}
+
+export async function deleteChat(id) {
+  const chats = await getChats();
+  delete chats[id];
+  await chrome.storage.local.set({ chats });
+  // A chat's routines go with it.
+  const routines = await getRoutines();
+  const left = Object.fromEntries(Object.entries(routines).filter(([, r]) => r.chatId !== id));
+  if (Object.keys(left).length !== Object.keys(routines).length) await chrome.storage.local.set({ routines: left });
+}
+
+export async function clearChats() {
+  await chrome.storage.local.set({ chats: {} });
+  const routines = await getRoutines();
+  await chrome.storage.local.set({ routines: Object.fromEntries(Object.entries(routines).filter(([, r]) => !r.chatId)) });
+}
+
+// ---- memory (stays on this device) ----
+const DAY = 86400000;
+
+export async function getMemories(settings) {
+  const { memories } = await chrome.storage.local.get('memories');
+  let list = Array.isArray(memories) ? memories : [];
+  const days = { '30d': 30, '90d': 90 }[settings?.memory?.retention];
+  if (days) {
+    const cutoff = Date.now() - days * DAY;
+    const kept = list.filter((m) => m.kind !== 'episodic' || (m.updated || m.created) >= cutoff);
+    if (kept.length !== list.length) {
+      list = kept;
+      await chrome.storage.local.set({ memories: list });
+    }
+  }
+  return list;
+}
+
+export async function saveMemories(list) {
+  await chrome.storage.local.set({ memories: list });
+}
+
+// ---- routines ----
+export async function getRoutines() {
+  const { routines } = await chrome.storage.local.get('routines');
+  return routines || {};
+}
+
+export async function saveRoutine(r) {
+  const all = await getRoutines();
+  all[r.id] = r;
+  await chrome.storage.local.set({ routines: all });
+}
+
+export async function deleteRoutine(id) {
+  const all = await getRoutines();
+  delete all[id];
+  await chrome.storage.local.set({ routines: all });
+}
