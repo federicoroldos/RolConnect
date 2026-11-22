@@ -126,7 +126,6 @@ function shell() {
             <button type="submit" class="send-btn" id="sendBtn" title="Send (Enter)">${ICONS.send}</button>
           </div>
         </form>
-        <div class="suggestions" id="suggestions"></div>
       </div>
     </main>
     <div class="modal" id="settingsModal" hidden></div>
@@ -290,7 +289,6 @@ function renderThread() {
   $('#main').classList.toggle('is-empty', !msgs.length);
   $('#thread').innerHTML = msgs.map(messageHTML).join('');
   $('#topTitle').textContent = chat?.title || (MODE === 'side' ? 'RolConnect' : '');
-  renderSuggestions();
   scrollToBottom(true);
 }
 
@@ -305,23 +303,6 @@ function rerenderMessage(idx) {
   if (confirmEl) $('.confirm-slot', fresh).appendChild(confirmEl);
   el.replaceWith(fresh);
   scrollToBottom();
-}
-
-const SUGGESTIONS = {
-  newtab: [
-    'What happened in tech news today?',
-    'Compare the best noise-cancelling headphones right now',
-    'Summarize the tab I was just reading',
-    'Plan a 3-day trip to Lisbon with links',
-  ],
-  side: ['Summarize this page', 'What are the key takeaways?', 'Fact-check the main claims here', 'Find related articles'],
-};
-
-function renderSuggestions() {
-  const empty = !chat?.messages?.length;
-  $('#suggestions').innerHTML = empty
-    ? SUGGESTIONS[MODE].map((s) => `<button class="chip" type="button">${esc(s)}</button>`).join('')
-    : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -1058,11 +1039,6 @@ function bind() {
     if (run && !run.paused && run.agentTabs.has(tabId) && Date.now() - run.lastAgentFocus > 1500) {
       pauseRun('You took over an agent tab. Resume when you are done.');
     }
-  });
-
-  $('#suggestions').addEventListener('click', (e) => {
-    const c = e.target.closest('.chip');
-    if (c) send(c.textContent);
   });
 
   $('#thread').addEventListener('click', (e) => {
