@@ -111,9 +111,7 @@ function shell() {
     <main class="main is-empty" id="main">
       <header class="topbar">
         <button class="icon-btn" id="showSidebar" title="Chats">${MODE === 'side' ? ICONS.menu : ICONS.sidebar}</button>
-        <div class="topbar-title" id="topTitle"></div>
-        <button class="icon-btn" id="topNew" title="New chat">${ICONS.compose}</button>
-        <button class="icon-btn" id="topSettings" title="Settings">${ICONS.sliders}</button>
+        <div class="topbar-title"><button type="button" class="title-btn" id="topTitle"></button></div>
       </header>
       <div class="sheet">
       <div class="scroller" id="scroller">
@@ -442,11 +440,59 @@ function messageHTML(m, idx) {
   </div>`;
 }
 
+// The title at the top: a started chat's title is a button that turns into a text field.
+function renderTopTitle() {
+  const t = $('#topTitle');
+  const editable = !!chat?.messages?.length;
+  t.textContent = chat?.title || (MODE === 'side' ? 'Rold Harness' : '');
+  t.disabled = !editable;
+  t.title = editable ? 'Rename chat' : '';
+  t.hidden = !t.textContent;
+}
+
+function editTitle() {
+  if (!chat?.messages?.length || $('.title-input')) return;
+  const target = chat;
+  const btn = $('#topTitle');
+  const input = document.createElement('input');
+  input.className = 'title-input';
+  input.value = target.title || '';
+  input.maxLength = 120;
+  input.setAttribute('aria-label', 'Chat title');
+  input.spellcheck = false;
+  btn.hidden = true;
+  btn.after(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const text = input.value.trim().replace(/\s+/g, ' ');
+    input.remove();
+    if (save && text && text !== target.title) {
+      target.title = text;
+      await saveChat(target);
+      chats[target.id] = target;
+      renderChatList();
+    }
+    if (chat === target) renderTopTitle();
+    else btn.hidden = !btn.textContent;
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
 function renderThread() {
   const msgs = chat?.messages || [];
   $('#main').classList.toggle('is-empty', !msgs.length);
+  // Chat/Search only applies to a new chat; a started one always sends to the agent.
+  if (msgs.length && inputMode === 'search') setInputMode('chat');
   $('#thread').innerHTML = msgs.map(messageHTML).join('');
-  $('#topTitle').textContent = chat?.title || (MODE === 'side' ? 'Rold Harness' : '');
+  renderTopTitle();
   scrollToBottom(true);
 }
 
@@ -1315,10 +1361,11 @@ function bindSettings() {
 // Events
 
 function bind() {
+  $('#topTitle').addEventListener('click', editTitle);
   const input = $('#input');
   input.addEventListener('input', () => { autosize(); updateSendBtn(); });
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
+    if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing && !chat?.messages?.length) {
       e.preventDefault();
       setInputMode(inputMode === 'chat' ? 'search' : 'chat');
       return;
@@ -1403,7 +1450,6 @@ function bind() {
   });
 
   $('#newChat').addEventListener('click', newChat);
-  $('#topNew').addEventListener('click', newChat);
   $('#searchChats').addEventListener('click', () => {
     const row = $('#searchRow');
     row.hidden = !row.hidden;
@@ -1429,7 +1475,6 @@ function bind() {
     closeSidebarOverlay();
   });
   $('#openSettings').addEventListener('click', () => openSettings());
-  $('#topSettings').addEventListener('click', () => openSettings());
   $('#collapseSidebar').addEventListener('click', () => {
     $('.app').classList.add('sidebar-collapsed');
     $('.app').classList.remove('sidebar-open');

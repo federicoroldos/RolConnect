@@ -174,9 +174,25 @@ svg { flex: none; }
 .sheet { display: contents; }
 .topbar { display: flex; align-items: center; gap: 2px; padding: 0 14px 0 18px; height: 56px; flex: none; position: relative; z-index: 2; border-radius: 12px 12px 0 0; transition: box-shadow 0.2s; }
 .main.scrolled:not(.is-empty) .topbar { box-shadow: 0 1px 0 var(--line), 0 8px 16px -14px rgba(0, 0, 0, 0.35); }
-.topbar-title { flex: 1; min-width: 0; margin: 0 0 0 6px; font-weight: 500; font-size: 14px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar-title { flex: 1; min-width: 0; display: flex; margin: 0 0 0 6px; }
+/* A started chat's title: shaded like the sidebar buttons, so it reads as clickable (it renames the chat). */
+.title-btn {
+  max-width: 100%; min-width: 0; padding: 6px 12px; border: 0; border-radius: 9px;
+  background: var(--bubble); box-shadow: var(--shadow-xs);
+  font: inherit; font-weight: 500; font-size: 14px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left;
+  transition: background 0.15s;
+}
+.title-btn:hover { background: var(--hover); }
+.title-btn:active { background: var(--canvas-press); }
+.title-btn:disabled { background: none; box-shadow: none; color: var(--text-2); padding-left: 0; cursor: default; }
+.title-input {
+  flex: 1; min-width: 0; max-width: 520px; padding: 6px 12px; border-radius: 9px;
+  border: 1px solid var(--line); background: var(--bg); box-shadow: var(--shadow-xs);
+  font: inherit; font-weight: 500; font-size: 14px; color: var(--text); outline: none;
+}
+.title-input:focus { border-color: var(--text-3); }
 .app.newtab:not(.sidebar-collapsed) #showSidebar { display: none; }
-.app.newtab .main.is-empty #topNew { visibility: hidden; }
 
 .scroller { flex: 1; overflow-y: auto; }
 .thread { max-width: 728px; margin: 0 auto; padding: 20px 24px 32px; }
@@ -224,6 +240,7 @@ svg { flex: none; }
   transition: transform 0.18s ease;
 }
 .mode-switch.is-search .ms-thumb { transform: translateX(100%); }
+.main:not(.is-empty) .mode-switch { display: none; }
 .send-btn {
   width: 36px; height: 36px; border-radius: 8px; border: 0; flex: none;
   display: inline-flex; align-items: center; justify-content: center;
@@ -245,7 +262,9 @@ svg { flex: none; }
 .tool-btn .t-main.t-empty { color: var(--text-2); }
 .tool-btn .t-sub { color: var(--text-3); }
 .tool-btn .t-warn { color: var(--accent); }
-.tool-btn svg { width: 17px; height: 17px; }
+/* Segoe UI draws its letters about 1.5px below the middle of the line, so the icons are
+   lowered to match the text's visual center instead of its box. */
+.tool-btn svg { width: 17px; height: 17px; flex: none; position: relative; top: 1px; }
 .app.side .tool-btn .t-label, .app.side .tool-btn .t-sub { display: none; }
 .app.side .tool-btn .t-main { max-width: 150px; }
 
