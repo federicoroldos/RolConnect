@@ -35,6 +35,7 @@ RolConnect replaces the new tab page and adds a side panel with an AI assistant 
 | `storage` | Saves the user's settings, API keys, chats, memories and routines locally in the browser profile. |
 | `unlimitedStorage` | Chat history and memories can exceed the default 10 MB local storage quota over time. |
 | `tabs` | Lists the open tabs and reads their titles and URLs, so the assistant can tell which page the user means. Also opens, switches and closes the tabs the agent works in. |
+| `activeTab` | Captures the visible area of a browser-internal page (for example `edge://extensions`) after the user invokes RolConnect on that tab, because Edge blocks direct access to those pages. |
 | `scripting` | Reads the text of a page, and clicks or types on it, when the user asks the assistant to read that page or act on it. |
 | `sidePanel` | Shows the assistant in the side panel, next to the page the user is viewing. |
 | `contextMenus` | Adds "Ask RolConnect" to the right-click menu for pages and selected text. |

@@ -238,6 +238,24 @@ function isWebUrl(u) {
   return /^(https?|file):/i.test(u || '');
 }
 
+function isInternalUrl(u) {
+  return /^(edge|chrome|about|devtools|view-source):/i.test(u || '');
+}
+
+async function captureInternalTab(tab) {
+  try {
+    await chrome.tabs.update(tab.id, { active: true });
+    if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    await sleep(150);
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 });
+    const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
+    if (!m) throw new Error('capture returned no image');
+    return { mediaType: m[1], data: m[2] };
+  } catch (e) {
+    return { error: e.message || String(e) };
+  }
+}
+
 function normalizeUrl(u) {
   u = String(u || '').trim();
   if (!/^[a-z][a-z0-9+.-]*:/i.test(u)) u = 'https://' + u;
@@ -274,7 +292,7 @@ async function targetTab(tabId) {
     }
   }
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (active && isWebUrl(active.url)) return active;
+  if (active) return active;
   const tabs = (await chrome.tabs.query({})).filter((t) => isWebUrl(t.url));
   tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
   if (!tabs.length) throw new Error('There is no open web page tab.');
@@ -286,7 +304,7 @@ async function inject(tabId, func, args = []) {
     const [res] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
     return res ? res.result : undefined;
   } catch (e) {
-    throw new Error(`Can't access this tab (${e.message}). Browser-internal pages and the add-ons store are off limits.`);
+    throw new Error(`Can't access this tab (${e.message}). Browser-internal pages and the add-ons store are off limits. Use browser_info for the installed build.`);
   }
 }
 
@@ -700,14 +718,67 @@ export const TOOLS = [
     },
   },
   {
+    name: 'browser_info',
+    kind: 'read',
+    description:
+      'Get the installed RolConnect version, browser version, platform and current tab. Use this for questions about the installed build or the browser. Extensions cannot read browser-internal pages such as edge://extensions.',
+    parameters: obj({}),
+    label: () => 'Checking browser info',
+    async run() {
+      const m = chrome.runtime.getManifest();
+      const ua = navigator.userAgent;
+      const edge = ua.match(/(?:Edg|EdgA|EdgiOS)\/([\d.]+)/);
+      const chromeVer = ua.match(/(?:Chrome|CriOS)\/([\d.]+)/);
+      const browser = edge ? `Microsoft Edge ${edge[1]}` : chromeVer ? `Chrome ${chromeVer[1]}` : navigator.appVersion;
+      const platform = navigator.userAgentData?.platform || navigator.platform || 'unknown';
+      const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      return {
+        content:
+          `Installed build: RolConnect ${m.version} (extension id ${chrome.runtime.id})\n` +
+          `Browser: ${browser}\nPlatform: ${platform}\n` +
+          `Current tab: ${active ? `${active.title} — ${active.url}` : 'none'}\n\n` +
+          "This comes from the browser's extension APIs. Browser-internal pages (edge://, chrome://) and the add-ons store can't be read or controlled by extensions.",
+        detail: `RolConnect ${m.version}`,
+      };
+    },
+  },
+  {
     name: 'read_tab',
     kind: 'read',
     description:
-      "Read the visible text of an open tab, including pages the user is logged into. Defaults to the user's current tab — use this when they say \"this page\".",
+      "Read the visible text of an open tab, including pages the user is logged into. For a browser-internal page (edge://, chrome://), captures its visible area instead. Defaults to the user's current tab — use this when they say \"this page\".",
     parameters: obj({ tab_id: TAB_ID }),
     label: () => 'Reading your tab',
     async run({ tab_id }) {
       const tab = await targetTab(tab_id);
+      if (!isWebUrl(tab.url)) {
+        const header = `Tab id=${tab.id}\nTitle: ${tab.title}\nURL: ${tab.url}\n\n`;
+        if (!isInternalUrl(tab.url)) {
+          return {
+            content: header + 'This page is not a web page, so Edge blocks extensions from reading or controlling it.',
+            detail: tab.title,
+          };
+        }
+        const shot = await captureInternalTab(tab);
+        if (shot.error) {
+          return {
+            content:
+              header +
+              'This is a browser-internal page. Edge blocks extensions from reading it directly, and the screenshot fallback was not allowed. ' +
+              'Open the RolConnect side panel while this page is in front (click the RolConnect toolbar button, or right-click → Summarize this page with RolConnect), then ask again. ' +
+              `(Capture failed: ${shot.error})`,
+            detail: tab.title,
+          };
+        }
+        return {
+          content:
+            header +
+            'This is a browser-internal page, so I captured its visible area instead. Read the text and UI from the screenshot (this needs a vision-capable model). ' +
+            'Only the visible part is included; ask again after scrolling for more.',
+          image: shot,
+          detail: `Captured ${tab.title}`,
+        };
+      }
       const page = await inject(tab.id, readPage, [MAX_TEXT]);
       return {
         content: `Tab id=${tab.id}\nTitle: ${page.title}\nURL: ${page.url}\n\n${page.text || '(no text)'}`,

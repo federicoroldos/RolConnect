@@ -90,6 +90,7 @@ Models load as soon as you paste a key. Under the chat box you can switch provid
 | `web_search` | Search the web |
 | `read_url` | Read any page (falls back to a background tab for sites that need JavaScript) |
 | `list_tabs`, `read_tab` | See your open tabs and read them, including pages you're logged into |
+| `browser_info` | Installed RolConnect and browser version, platform and current tab |
 | `open_tab`, `navigate_tab`, `scroll_page`, `close_tab` | Drive tabs |
 | `get_page_elements`, `click_element`, `type_text`, `press_key`, `wait` | Use pages: buttons, links, forms, menus |
 | `screenshot` | See a tab, including background tabs |
@@ -100,6 +101,9 @@ Models load as soon as you paste a key. Under the chat box you can switch provid
 | `create_routine` | Set up a scheduled task (always asks first) |
 
 </details>
+
+> [!NOTE]
+> Edge doesn't let extensions read or control browser-internal pages (`edge://`, `chrome://`) directly. Open RolConnect's side panel on one of those pages (toolbar button, or right-click → **Summarize this page with RolConnect**) and `read_tab` can capture the visible area and read it from the screenshot with a vision-capable model. For build and browser details, `browser_info` is faster.
 
 ## Privacy
 
