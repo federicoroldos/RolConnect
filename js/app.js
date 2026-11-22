@@ -61,9 +61,18 @@ const LOGO = `<svg viewBox="0 0 32 32" width="22" height="22"><defs><linearGradi
 let settings;
 let chats = {};
 let chat = null; // current chat
-let controller = null;
-let run = null; // the running task: { idx, agentTabs, lastAgentFocus, paused, pauseReason, resume, steer }
-let queue = []; // follow-ups waiting for the current task to finish
+// Every chat can have its own task running; tasks keep going while you look at other chats or tabs.
+const runs = new Map(); // chatId → { controller, chat, idx, agentTabs, lastAgentFocus, paused, pauseReason, resume, steer, confirm, paint }
+const queues = {}; // chatId → follow-ups waiting for that chat's task to finish
+let controller = null; // the current chat's task (mirrors runs)
+let run = null;
+let queue = [];
+
+function syncRun() {
+  run = (chat && runs.get(chat.id)) || null;
+  controller = run?.controller || null;
+  queue = chat ? (queues[chat.id] ||= []) : [];
+}
 let includePage = true;
 let pageInfo = null;
 let windowId = null;
@@ -184,28 +193,35 @@ function renderChatList() {
   $('#chatList').innerHTML = list.length
     ? Object.entries(groups)
         .map(([g, cs]) => `<div class="cl-group">${g}</div>` + cs
-          .map((c) => `<div class="cl-item ${chat?.id === c.id ? 'active' : ''}" data-id="${c.id}">${c.routineId ? `<span class="cl-ic" title="Routine">${ICONS.routine}</span>` : ''}<span>${esc(c.title || 'New chat')}</span><button class="cl-del" data-del="${c.id}" title="Delete">${ICONS.trash}</button></div>`)
+          .map((c) => `<div class="cl-item ${chat?.id === c.id ? 'active' : ''}" data-id="${c.id}">${chatBadge(c)}<span>${esc(c.title || 'New chat')}</span><button class="cl-del" data-del="${c.id}" title="Delete">${ICONS.trash}</button></div>`)
           .join(''))
         .join('')
     : '<div class="cl-empty">Your chats will show up here.</div>';
 }
 
-function openChat(id) {
-  if (controller) return;
-  chat = chats[id] || null;
+function chatBadge(c) {
+  const r = runs.get(c.id);
+  if (r?.confirm) return `<span class="cl-ic warn" title="Waiting for your approval">${ICONS.approval}</span>`;
+  if (r) return `<span class="cl-ic" title="Working"><span class="spinner"></span></span>`;
+  return c.routineId ? `<span class="cl-ic" title="Routine">${ICONS.routine}</span>` : '';
+}
+
+function showChat(c) {
+  chat = c;
+  syncRun();
   renderThread();
   renderChatList();
+  renderQueue();
+  updateSendBtn();
   closeSidebarOverlay();
 }
 
+function openChat(id) {
+  showChat(chats[id] || null);
+}
+
 function newChat() {
-  if (controller) controller.abort();
-  queue = [];
-  renderQueue();
-  chat = null;
-  renderThread();
-  renderChatList();
-  closeSidebarOverlay();
+  showChat(null);
   $('#input').focus();
 }
 
@@ -274,7 +290,8 @@ function messageHTML(m, idx) {
       ${paused ? `<div class="paused-card">${ICONS.pause}<span>${esc(run.pauseReason)}</span><button type="button" class="btn primary small act" data-act="resume">${ICONS.play}Resume</button></div>` : ''}
       ${renderSources(m)}
       ${body}
-      <div class="confirm-slot"></div>
+      <div class="confirm-slot">${run?.idx === idx && run.confirm ? `<div class="confirm-card"><div class="cc-text"><strong>Approve this action?</strong><span>${esc(run.confirm.text)}</span></div>
+        <div class="cc-btns"><button type="button" class="btn ghost" data-v="0">Deny</button><button type="button" class="btn primary" data-v="1">Approve</button></div></div>` : ''}</div>
       ${m.status !== 'running' ? `<div class="msg-actions">
         ${m.text ? `<button class="act" data-act="copy" title="Copy">${ICONS.copy}</button>` : ''}
         <button class="act" data-act="retry" title="Regenerate">${ICONS.retry}</button>
@@ -295,13 +312,10 @@ function renderThread() {
 function rerenderMessage(idx) {
   const el = $(`.msg[data-idx="${idx}"]`);
   if (!el) return renderThread();
-  const confirmEl = $('.confirm-slot', el)?.firstElementChild;
   const m = chat.messages[idx];
   const tmp = document.createElement('div');
   tmp.innerHTML = messageHTML(m, idx);
-  const fresh = tmp.firstElementChild;
-  if (confirmEl) $('.confirm-slot', fresh).appendChild(confirmEl);
-  el.replaceWith(fresh);
+  el.replaceWith(tmp.firstElementChild);
   scrollToBottom();
 }
 
@@ -432,35 +446,54 @@ function renderQueue() {
 // ---------------------------------------------------------------------------
 // Confirmation card for browser actions
 
-function confirmAction(idx, text) {
+// The card lives in the run's state, so it survives switching chats and shows again when you come back.
+function confirmAction(r, text) {
   return new Promise((resolve) => {
-    const slot = $(`.msg[data-idx="${idx}"] .confirm-slot`);
-    if (!slot) return resolve(false);
-    const m = chat.messages[idx];
-    m.waiting = true;
-    rerenderMessage(idx);
-    const card = document.createElement('div');
-    card.className = 'confirm-card';
-    card.innerHTML = `<div class="cc-text"><strong>Approve this action?</strong><span>${esc(text)}</span></div>
-      <div class="cc-btns"><button type="button" class="btn ghost" data-v="0">Deny</button><button type="button" class="btn primary" data-v="1">Approve</button></div>`;
-    $(`.msg[data-idx="${idx}"] .confirm-slot`).appendChild(card);
-    scrollToBottom(true);
+    const m = r.chat.messages[r.idx];
     let settled = false;
     const done = (v) => {
       if (settled) return;
       settled = true;
-      card.remove();
+      r.confirm = null;
       m.waiting = false;
-      rerenderMessage(idx);
+      r.paint();
+      renderChatList();
       resolve(v);
     };
-    card.addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-v]');
-      if (b) done(b.dataset.v === '1');
-    });
-    controller?.signal.addEventListener('abort', () => done(false), { once: true });
+    r.confirm = { text, done };
+    m.waiting = true;
+    r.paint();
+    renderChatList();
+    if (chat === r.chat) scrollToBottom(true);
+    notifyApproval(r, text);
+    r.controller.signal.addEventListener('abort', () => done(false), { once: true });
   });
 }
+
+// When you're looking at another chat or tab, a notification tells you the agent is waiting.
+let myTabId = null;
+chrome.tabs.getCurrent?.().then((t) => { myTabId = t?.id ?? null; }).catch(() => {});
+
+function notifyApproval(r, text) {
+  if (!document.hidden && chat === r.chat) return;
+  chrome.notifications?.create(`rolconnect-approve:${r.chat.id}:${Date.now()}`, {
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    title: `Approve: ${r.chat.title || 'RolConnect'}`,
+    message: text,
+    priority: 2,
+  }, () => void chrome.runtime.lastError);
+}
+
+chrome.notifications?.onClicked.addListener((nid) => {
+  const [prefix, chatId] = nid.split(':');
+  if (prefix !== 'rolconnect-approve' || !runs.has(chatId)) return;
+  chrome.notifications.clear(nid);
+  if (myTabId != null) {
+    chrome.tabs.update(myTabId, { active: true }).then((t) => chrome.windows.update(t.windowId, { focused: true })).catch(() => {});
+  }
+  openChat(chatId);
+});
 
 // ---------------------------------------------------------------------------
 // Sending
@@ -490,7 +523,7 @@ function pauseRun(reason) {
   if (!run || run.paused) return;
   run.paused = true;
   run.pauseReason = reason;
-  rerenderMessage(run.idx);
+  run.paint();
   updateSendBtn();
 }
 
@@ -499,7 +532,7 @@ function resumeRun() {
   run.paused = false;
   const r = run.resume;
   run.resume = null;
-  rerenderMessage(run.idx);
+  run.paint();
   updateSendBtn();
   r?.();
 }
@@ -512,20 +545,26 @@ function followUp(text) {
     renderQueue();
   } else {
     run.steer.push(text);
-    const am = chat.messages[run.idx];
+    const am = run.chat.messages[run.idx];
     am.steps.push({ kind: 'steer', label: text, status: 'running' });
-    rerenderMessage(run.idx);
+    run.paint();
     if (run.paused) resumeRun();
   }
   updateSendBtn();
 }
 
-async function send(text, { regenerate = false } = {}) {
+// target: the chat to run in (defaults to the one on screen). Runs keep going when you switch away.
+async function send(text, { regenerate = false, target = null } = {}) {
   text = text.trim();
-  if (!text || controller) return;
+  if (!text) return;
+  let thisChat = target || chat;
+  if (thisChat && runs.has(thisChat.id)) return;
 
-  if (MODE === 'newtab' && !regenerate && looksLikeUrl(text)) {
-    location.href = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+  if (MODE === 'newtab' && !regenerate && !target && looksLikeUrl(text)) {
+    const url = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+    // Leaving this page would stop the tasks running in it, so open the site in a new tab instead.
+    if (runs.size) { chrome.tabs.create({ url }); $('#input').value = ''; autosize(); updateSendBtn(); }
+    else location.href = url;
     return;
   }
   if (!isConfigured(settings)) {
@@ -534,12 +573,14 @@ async function send(text, { regenerate = false } = {}) {
     return;
   }
 
-  if (!chat) {
-    chat = { id: uid(), title: text.slice(0, 60), created: Date.now(), updated: Date.now(), messages: [] };
-    chats[chat.id] = chat;
+  if (!thisChat) {
+    thisChat = { id: uid(), title: text.slice(0, 60), created: Date.now(), updated: Date.now(), messages: [] };
+    chats[thisChat.id] = thisChat;
+    chat = thisChat;
   }
+  const onScreen = () => chat === thisChat;
 
-  const msgs = chat.messages;
+  const msgs = thisChat.messages;
   const history = buildHistory(msgs);
 
   if (!regenerate) msgs.push({ role: 'user', text, ts: Date.now() });
@@ -549,18 +590,26 @@ async function send(text, { regenerate = false } = {}) {
   };
   msgs.push(am);
   const idx = msgs.length - 1;
-  $('#input').value = '';
-  autosize();
-  renderThread();
+  if (!target) { $('#input').value = ''; autosize(); }
+
+  const ctrl = new AbortController();
+  const signal = ctrl.signal;
+  const thisRun = {
+    controller: ctrl, chat: thisChat, idx, agentTabs: new Set(), lastAgentFocus: 0,
+    paused: false, pauseReason: '', resume: null, steer: [], confirm: null,
+    paint: () => { if (onScreen()) rerenderMessage(idx); },
+  };
+  runs.set(thisChat.id, thisRun);
+  if (onScreen()) { syncRun(); renderThread(); updateSendBtn(); }
   renderChatList();
 
-  controller = new AbortController();
-  const signal = controller.signal;
-  run = { idx, agentTabs: new Set(), lastAgentFocus: 0, paused: false, pauseReason: '', resume: null, steer: [] };
-  const thisRun = run;
-  setRunning(true);
+  // Keeps the browser from freezing this page while it sits in a background tab.
+  let release;
+  const held = new Promise((res) => { release = res; });
+  navigator.locks?.request(`rolconnect-run-${thisChat.id}`, () => held).catch(() => {});
 
   const seen = new Set();
+  const paint = thisRun.paint;
   const ui = {
     // Holds the agent before its next step while the user has paused it.
     gate: () => (thisRun.paused && !signal.aborted
@@ -571,33 +620,32 @@ async function send(text, { regenerate = false } = {}) {
       const out = thisRun.steer.splice(0);
       am.steers = [...(am.steers || []), ...out];
       am.steps.forEach((s) => s.kind === 'steer' && s.status === 'running' && (s.status = 'done'));
-      rerenderMessage(idx);
+      paint();
       return out;
     },
     step(s) {
       am.steps.push({ ...s });
-      rerenderMessage(idx);
+      paint();
       return am.steps.length - 1;
     },
     updateStep(i, patch) {
       Object.assign(am.steps[i], patch);
-      rerenderMessage(idx);
+      paint();
     },
     source(s) {
       if (!s?.url || seen.has(s.url)) return;
       seen.add(s.url);
       am.sources.push({ title: s.title || s.url, url: s.url });
-      rerenderMessage(idx);
+      paint();
     },
     text(t) {
       am.text = t;
-      rerenderMessage(idx);
+      paint();
     },
-    confirm: (desc) => confirmAction(idx, desc),
+    confirm: (desc) => confirmAction(thisRun, desc),
   };
 
   if (MODE === 'side') await refreshPageInfo();
-  const thisChat = chat;
   try {
     const memories = settings.memory?.enabled ? await getMemories(settings) : [];
     const out = await runAgent({
@@ -617,22 +665,28 @@ async function send(text, { regenerate = false } = {}) {
     if (e.name === 'AbortError') am.text = (am.text ? am.text + '\n\n' : '') + '_Stopped._';
     else am.error = e.message || String(e);
   } finally {
+    release();
     // Follow-ups the agent never got to read run next, as their own messages.
-    const leftover = thisRun.steer.splice(0);
+    const q = (queues[thisChat.id] ||= []);
+    q.unshift(...thisRun.steer.splice(0));
     am.steps = am.steps.filter((s) => !(s.kind === 'steer' && s.status === 'running'));
     am.status = 'done';
     am.waiting = false;
     am.steps.forEach((s) => s.status === 'running' && (s.status = 'error'));
-    controller = null;
-    run = null;
-    if (!signal.aborted || chat === thisChat) queue.unshift(...leftover);
-    setRunning(false);
+    runs.delete(thisChat.id);
     thisChat.updated = Date.now();
-    if (chat === thisChat) rerenderMessage(idx);
+    if (onScreen()) { syncRun(); paint(); updateSendBtn(); renderQueue(); }
     renderChatList();
-    saveChat(thisChat).catch((err) => toast('Could not save chat: ' + err.message));
-    renderQueue();
-    if (queue.length && chat === thisChat && !signal.aborted) setTimeout(() => { if (!controller && queue.length) { const q = queue.shift(); renderQueue(); send(q); } }, 0);
+    if (chats[thisChat.id]) saveChat(thisChat).catch((err) => toast('Could not save chat: ' + err.message));
+    // Queued follow-ups run next, even if you're looking at another chat.
+    if (q.length && !signal.aborted && chats[thisChat.id]) {
+      setTimeout(() => {
+        if (runs.has(thisChat.id) || !q.length) return;
+        const next = q.shift();
+        if (onScreen()) renderQueue();
+        send(next, { target: thisChat });
+      }, 0);
+    }
   }
 }
 
@@ -940,6 +994,8 @@ function bindSettings() {
     }
     if (e.target.closest('[data-clear]')) {
       if (!confirm('Delete all chats? This cannot be undone.')) return;
+      runs.forEach((r) => r.controller.abort());
+      for (const k in queues) delete queues[k];
       await clearChats();
       chats = {};
       newChat();
@@ -1034,14 +1090,14 @@ function bind() {
     queue.splice(+b.dataset.unqueue, 1);
     renderQueue();
   });
-  // Taking over: switching to one of the agent's tabs while it works pauses it.
-  chrome.tabs.onActivated.addListener(({ tabId }) => {
-    if (run && !run.paused && run.agentTabs.has(tabId) && Date.now() - run.lastAgentFocus > 1500) {
-      pauseRun('You took over an agent tab. Resume when you are done.');
-    }
+  // Closing or leaving this page would stop the tasks running in it.
+  window.addEventListener('beforeunload', (e) => {
+    if (runs.size) { e.preventDefault(); e.returnValue = ''; }
   });
 
   $('#thread').addEventListener('click', (e) => {
+    const cv = e.target.closest('.confirm-card [data-v]');
+    if (cv) { run?.confirm?.done(cv.dataset.v === '1'); return; }
     const copyCode = e.target.closest('.copy-code');
     if (copyCode) {
       navigator.clipboard.writeText($('code', copyCode.parentElement).textContent);
@@ -1071,6 +1127,8 @@ function bind() {
     if (del) {
       e.stopPropagation();
       const id = del.dataset.del;
+      runs.get(id)?.controller.abort();
+      delete queues[id];
       await deleteChat(id);
       delete chats[id];
       if (chat?.id === id) newChat();
@@ -1175,10 +1233,10 @@ function bind() {
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
-    if (changes.settings?.newValue && !controller && $('#settingsModal').hidden) {
+    if (changes.settings?.newValue && !runs.size && $('#settingsModal').hidden) {
       getSettings().then((s) => { settings = s; applyTheme(); renderModelPill(); });
     }
-    if (changes.chats && !controller) {
+    if (changes.chats && !runs.size) {
       getChats().then((c) => { chats = c; if (chat && c[chat.id] && chat.updated < c[chat.id].updated) { chat = c[chat.id]; renderThread(); } renderChatList(); });
     }
     if (changes.routines && !$('#settingsModal').hidden) renderRoutines();
@@ -1190,7 +1248,6 @@ async function consumePending() {
   const { pendingPrompt } = await chrome.storage.session.get('pendingPrompt');
   if (!pendingPrompt || Date.now() - pendingPrompt.ts > 60000) return;
   await chrome.storage.session.remove('pendingPrompt');
-  if (controller) return;
   newChat();
   send(pendingPrompt.text);
 }

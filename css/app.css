@@ -474,3 +474,5 @@ a { color: var(--accent); }
 .r-run.s-needs-approval { color: var(--accent-2); }
 .routine-form { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 0 0 10px; }
 .r-sched-row select[hidden], .r-sched-row input[hidden] { display: none; }
+.cl-ic .spinner { width: 11px; height: 11px; border-width: 1.5px; }
+.cl-ic.warn { color: var(--accent); }
