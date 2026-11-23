@@ -536,3 +536,63 @@ select option { background: var(--raised); color: var(--text); }
   .greeting { font-size: 23px; }
   .thread, .composer-wrap, .hero { padding-left: 16px; padding-right: 16px; }
 }
+
+/* ---- 0.8: attachments, checklist, questions, drafts, visuals, screenshots ---- */
+.field.row > span small { display: block; font-size: 12px; color: var(--text-3); margin-top: 1px; }
+.row-ctl, .field.row > .row-ctl { display: inline-flex; flex: none; align-items: center; gap: 10px; }
+.mem-add .btn svg { width: 15px; height: 15px; }
+
+.attach-row:empty { display: none; }
+.attach-row, .msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; white-space: normal; }
+.file-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 3px 6px 3px 4px; border-radius: 8px; background: var(--hover); font-size: 12.5px; color: var(--text-2); }
+.file-chip img { width: 28px; height: 28px; object-fit: cover; border-radius: 5px; flex: none; }
+.file-chip > svg { width: 15px; height: 15px; flex: none; color: var(--text-3); }
+.fc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.msg.prompt .msg-files { margin-bottom: 8px; }
+.attach-btn { margin-right: 2px; }
+.composer.dropping { outline: 2px dashed var(--accent); outline-offset: 6px; border-radius: 6px; }
+
+.todos { margin: 0 0 14px; padding: 10px 14px 8px; border-radius: 12px; background: var(--raised); box-shadow: var(--shadow-xs); }
+.todos-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text-2); margin-bottom: 4px; }
+.todos-head svg { width: 16px; height: 16px; }
+.todos-count { margin-left: auto; font-weight: 500; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.todos ul { list-style: none; margin: 0; padding: 0; }
+.todo { display: flex; align-items: flex-start; gap: 9px; padding: 3px 0; font-size: 13.5px; color: var(--text); }
+.todo-box { flex: none; width: 16px; height: 16px; margin-top: 2px; border-radius: 5px; box-shadow: inset 0 0 0 1.5px var(--line-strong); display: inline-flex; align-items: center; justify-content: center; }
+.todo-box svg { width: 12px; height: 12px; }
+.todo.t-done { color: var(--text-3); }
+.todo.t-done > span:last-child { text-decoration: line-through; }
+.todo.t-done .todo-box { background: var(--text); box-shadow: none; color: var(--on-ink); }
+.todo.t-in_progress .todo-box { box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); }
+.todo.t-blocked .todo-box { box-shadow: inset 0 0 0 1.5px var(--bad); color: var(--bad); }
+.todo.t-blocked { color: var(--text-2); }
+
+.ask-card { display: flex; align-items: flex-start; gap: 14px; margin: 18px 0 8px; padding: 14px 16px; border-radius: 12px; background: var(--raised); box-shadow: var(--shadow-sheet); }
+.ask-card > svg { margin-top: 2px; color: var(--accent); flex: none; }
+.ask-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.ask-body strong { font-weight: 600; white-space: pre-wrap; }
+.ask-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-opts .btn:not(.primary) { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.ask-input { display: flex; gap: 6px; }
+.ask-input input { flex: 1; min-width: 0; border: 0; border-bottom: 1px solid var(--line-strong); background: none; color: var(--text); font: inherit; padding: 6px 2px; outline: none; }
+.ask-input input:focus { border-bottom-color: var(--accent); }
+.ask-skip { align-self: flex-start; font-size: 12.5px; }
+
+.draft { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: var(--raised); box-shadow: var(--shadow-sheet); }
+.draft-tag { font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
+.draft-title { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+.draft-fields { margin: 0 0 8px; display: grid; gap: 2px; font-size: 13.5px; }
+.draft-fields > div { display: flex; gap: 10px; min-width: 0; }
+.draft-fields dt { flex: none; width: 64px; color: var(--text-3); }
+.draft-fields dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.draft-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.55; padding: 8px 0 4px; border-top: 1px solid var(--line); }
+.draft-actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 0 -10px; }
+.draft-actions .btn { color: var(--accent); }
+
+.visual-host { margin: 0 0 14px; }
+.visual-loading { font-size: 13px; color: var(--text-3); padding: 8px 0; }
+.visual-frame { display: block; width: 100%; height: 120px; border: 0; background: transparent; color-scheme: normal; }
+
+.shots { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 14px; }
+.shot { padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-xs); max-width: 100%; }
+.shot img { display: block; max-width: 100%; max-height: 360px; }

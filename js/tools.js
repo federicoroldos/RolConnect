@@ -1,8 +1,10 @@
 // Agent tools: web search, page reading, tab control, memory, history and routines.
 // Every tool returns { content: string, sources?: [{title,url}], detail?: string }.
 
-import { getMemories, saveMemories, saveRoutine } from './storage.js';
+import { getMemories, saveMemories, saveRoutine, getRoutines, deleteRoutine, getReads, addRead } from './storage.js';
 import { normalizeSchedule, nextRunTime, describeSchedule } from './routines.js';
+import { snapshotPage, describeEl, clickEl, typeEl, pressKeyEl, scrollEl, runInPage } from './page.js';
+import { SKILLS, getSkill, skillText } from './skills.js';
 
 const MAX_TEXT = 15000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -49,11 +51,18 @@ const CONSEQUENTIAL = {
 // Injected / shared page functions (must be self-contained: they are serialized
 // by chrome.scripting.executeScript).
 
-function readPage(maxLen, docArg) {
+function readPage(maxLen, docArg, selector) {
   const doc = docArg || document;
   const live = !docArg;
   const title = (doc.title || '').trim();
   const url = live ? location.href : '';
+  if (selector) {
+    let el = null;
+    try { el = doc.querySelector(selector); } catch {}
+    if (!el) return { title, url, text: '', error: 'Nothing matches the selector ' + selector + '.' };
+    const t = (el.innerText || el.textContent || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    return { title, url, text: t.length > maxLen ? t.slice(0, maxLen) + '\n\n[truncated, ' + t.length + ' characters total]' : t };
+  }
   const main = doc.querySelector('article, main, [role="main"]');
   const root = main && (main.textContent || '').trim().length > 400 ? main : doc.body;
   if (!root) return { title, url, text: '' };
@@ -92,131 +101,88 @@ function readPage(maxLen, docArg) {
   return { title, url, text };
 }
 
-function collectElements(limit) {
-  const sel = [
-    'a[href]', 'button', 'input:not([type=hidden])', 'textarea', 'select', 'summary',
-    '[role=button]', '[role=link]', '[role=tab]', '[role=menuitem]', '[role=checkbox]',
-    '[role=option]', '[role=textbox]', '[role=combobox]', '[contenteditable="true"]',
-  ].join(',');
-  document.querySelectorAll('[data-rold-id]').forEach((e) => e.removeAttribute('data-rold-id'));
-  const out = [];
-  let id = 0;
-  for (const el of document.querySelectorAll(sel)) {
-    const r = el.getBoundingClientRect();
-    const st = getComputedStyle(el);
-    if (r.width < 2 || r.height < 2 || st.visibility === 'hidden' || st.display === 'none' || el.disabled) continue;
-    const raw =
-      el.getAttribute('aria-label') || el.innerText || el.value || el.getAttribute('placeholder') ||
-      el.getAttribute('title') || el.getAttribute('alt') || el.getAttribute('name') || '';
-    const label = String(raw).trim().replace(/\s+/g, ' ').slice(0, 80);
-    const tag = el.tagName.toLowerCase();
-    const type = tag === 'input' ? el.type : '';
-    id++;
-    el.setAttribute('data-rold-id', String(id));
-    const inView = r.bottom > 0 && r.top < innerHeight;
-    let line = `[${id}] ${tag}${type ? `(${type})` : ''} "${label}"`;
-    if (tag === 'a' && el.href) line += ` -> ${el.href.slice(0, 120)}`;
-    if (!inView) line += ' (offscreen)';
-    out.push(line);
-    if (out.length >= limit) break;
+// ---------------------------------------------------------------------------
+// Element ids and frames. Top-frame elements have plain ids ("12"); elements inside
+// an iframe carry the frame: "f3:12".
+
+function parseEl(id) {
+  const s = String(id ?? '').trim();
+  const m = /^f(\d+):(\d+)$/i.exec(s);
+  if (m) return { frameId: Number(m[1]), local: m[2] };
+  if (/^\d+$/.test(s)) return { frameId: 0, local: s };
+  throw new Error(`"${id}" is not an element id. Use an id from get_page_elements, like 12 or f3:7.`);
+}
+
+async function injectAt(tabId, frameId, func, args = []) {
+  try {
+    const [res] = await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId || 0] }, func, args });
+    return res ? res.result : undefined;
+  } catch (e) {
+    if (frameId) throw new Error(`That frame is gone (${e.message}). Call get_page_elements again.`);
+    throw new Error(`Can't access this tab (${e.message}). Browser-internal pages and the add-ons store are off limits.`);
   }
-  return { title: document.title, url: location.href, elements: out };
 }
 
-// id == null describes the focused element.
-function describeElement(id) {
-  const el = id == null ? document.activeElement : document.querySelector(`[data-rold-id="${id}"]`);
-  if (!el || el === document.body) return null;
-  const raw = el.getAttribute('aria-label') || el.innerText || el.value || el.getAttribute('placeholder') || el.getAttribute('name') || '';
-  const isSearch = (e) =>
-    !!e && (e.type === 'search' || e.getAttribute('role') === 'searchbox' ||
-      /search|buscar|query|^q$/i.test(`${e.name || ''} ${e.getAttribute('placeholder') || ''} ${e.getAttribute('aria-label') || ''}`));
-  const form = el.form || el.closest('form');
-  return {
-    tag: el.tagName.toLowerCase(),
-    type: el.type || '',
-    label: String(raw).trim().replace(/\s+/g, ' ').slice(0, 80),
-    password: el.type === 'password' || /cc-|one-time-code/.test(el.autocomplete || '') || /card|cvc|cvv/i.test(el.name || ''),
-    submit: (el.tagName === 'BUTTON' && !!form && (el.getAttribute('type') || 'submit') === 'submit') || (el.tagName === 'INPUT' && el.type === 'submit'),
-    multiline: el.tagName === 'TEXTAREA' || el.isContentEditable,
-    search: isSearch(el) || !!el.closest('[role=search]') || !!form?.querySelector('input[type=search],[role=searchbox],input[name=q]'),
-  };
-}
+const AD_FRAME = /doubleclick|googlesyndication|adservice|amazon-adsystem|adnxs|criteo|taboola|outbrain|recaptcha|hcaptcha|challenges\.cloudflare/i;
+const MAX_VIEW = 16000;
+const indentOf = (d) => '  '.repeat(Math.min(d, 8));
+const fmtItems = (items, prefix) => items.map((i) => `${indentOf(i.d)}${i.id ? `[${prefix}${i.id}] ` : ''}${i.t}`).join('\n');
 
-function pressKey(id, key) {
-  const el = id == null ? document.activeElement || document.body : document.querySelector(`[data-rold-id="${id}"]`);
-  if (!el) return { ok: false, error: 'Element not found. Call get_page_elements again.' };
-  if (id != null) { el.scrollIntoView({ block: 'center' }); el.focus?.(); }
-  const codes = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, ' ': 32, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, PageUp: 33, PageDown: 34, Home: 36, End: 35 };
-  const opts = { key, code: key === ' ' ? 'Space' : key, keyCode: codes[key] || 0, which: codes[key] || 0, bubbles: true, cancelable: true };
-  const notCancelled = el.dispatchEvent(new KeyboardEvent('keydown', opts));
-  if (key === 'Enter' || key === ' ') el.dispatchEvent(new KeyboardEvent('keypress', opts));
-  el.dispatchEvent(new KeyboardEvent('keyup', opts));
-  if (notCancelled) {
-    if (key === 'Enter' && el.form && el.tagName === 'INPUT') el.form.requestSubmit ? el.form.requestSubmit() : el.form.submit();
-    else if (['PageDown', 'PageUp', 'Home', 'End', ' '].includes(key) && !el.isContentEditable && !/INPUT|TEXTAREA|SELECT/.test(el.tagName)) {
-      const h = innerHeight * 0.85;
-      if (key === 'Home') scrollTo(0, 0);
-      else if (key === 'End') scrollTo(0, document.documentElement.scrollHeight);
-      else scrollBy(0, key === 'PageUp' ? -h : h);
+// A structured view of a tab: headings, areas, dialogs and interactive elements with ids,
+// including open shadow roots and iframes. With diff, only what changed since the last view.
+async function pageView(tabId, opts = {}) {
+  let results;
+  try {
+    results = await chrome.scripting.executeScript({ target: { tabId, allFrames: !opts.selector }, func: snapshotPage, args: [opts] });
+  } catch (e) {
+    throw new Error(`Can't access this tab (${e.message}). Browser-internal pages and the add-ons store are off limits.`);
+  }
+  const top = results.find((r) => r.frameId === 0)?.result || results[0]?.result;
+  if (!top) throw new Error('Could not read this page.');
+  if (top.error) return { error: top.error, url: '', title: '' };
+  const frames = results
+    .filter((r) => r.frameId !== 0 && r.result?.items?.length && !AD_FRAME.test(r.result.url || ''))
+    .slice(0, 6);
+
+  const head = [];
+  if (top.dialog) head.push(`A dialog is open ("${top.dialog}"). If it blocks the task, deal with it first (close, accept or fill it).`);
+  let body;
+  let changed = 0;
+  if (opts.diff && top.changes) {
+    const { added, removed } = top.changes;
+    changed = added.length + removed;
+    const frameAdds = frames.filter((f) => f.result.changes?.added?.length);
+    if (!added.length && !removed && !frameAdds.length) {
+      body = 'No visible change on the page. If you expected one, the action may not have worked: check with get_page_elements or a screenshot.';
+    } else if (added.length > 80) {
+      body = `The page changed a lot (${added.length} new or changed items, ${removed} gone). Current view:\n${fmtItems(top.items, '')}`;
+    } else {
+      body = `Page changes: ${added.length} new or changed, ${removed} gone.${added.length ? '\n' + fmtItems(added, '') : ''}`;
+      for (const f of frameAdds) body += `\nIn frame f${f.frameId}:\n${fmtItems(f.result.changes.added, `f${f.frameId}:`)}`;
     }
-  }
-  return { ok: true };
-}
-
-function clickElement(id) {
-  const el = document.querySelector(`[data-rold-id="${id}"]`);
-  if (!el) return { ok: false, error: 'Element not found. Call get_page_elements again (the page may have changed).' };
-  el.scrollIntoView({ block: 'center', inline: 'center' });
-  if (el.focus) el.focus();
-  el.click();
-  return { ok: true };
-}
-
-function typeIntoElement(id, text, submit) {
-  const el = document.querySelector(`[data-rold-id="${id}"]`);
-  if (!el) return { ok: false, error: 'Element not found. Call get_page_elements again.' };
-  if (el.type === 'password') return { ok: false, error: 'Typing into password fields is not allowed. Ask the user to do it.' };
-  el.scrollIntoView({ block: 'center' });
-  el.focus();
-  if (el.isContentEditable) {
-    document.execCommand('selectAll', false);
-    document.execCommand('insertText', false, text);
-  } else if (el.tagName === 'SELECT') {
-    // Pick the option by value or by visible text.
-    const want = String(text).trim().toLowerCase();
-    const opt = [...el.options].find((o) => o.value.toLowerCase() === want || o.text.trim().toLowerCase() === want) ||
-      [...el.options].find((o) => o.text.toLowerCase().includes(want));
-    if (!opt) return { ok: false, error: `No option matching "${text}". Options: ${[...el.options].map((o) => o.text.trim()).join(' | ').slice(0, 500)}` };
-    el.value = opt.value;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
   } else {
-    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-    setter.call(el, text);
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-  if (submit) {
-    const opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
-    const notCancelled = el.dispatchEvent(new KeyboardEvent('keydown', opts));
-    el.dispatchEvent(new KeyboardEvent('keypress', opts));
-    el.dispatchEvent(new KeyboardEvent('keyup', opts));
-    if (notCancelled && el.form) {
-      if (el.form.requestSubmit) el.form.requestSubmit();
-      else el.form.submit();
+    body = fmtItems(top.items, '') || '(nothing interactive on this page)';
+    if (top.omitted) body += `\n[${top.omitted} offscreen elements not listed. Scroll, or pass a selector to focus on one part.]`;
+    if (top.cut) body += `\n[${top.cut} more elements not listed. Pass a selector to focus on one part.]`;
+    for (const f of frames) {
+      body += `\n--- frame f${f.frameId} (${String(f.result.url).slice(0, 100)}) ---\n${fmtItems(f.result.items, `f${f.frameId}:`)}`;
     }
   }
-  return { ok: true };
+  if (top.scroll?.max > 0) head.push(`Scroll position ${top.scroll.y}/${top.scroll.max}px.`);
+  let text = `${head.length ? head.join(' ') + '\n' : ''}${body}`;
+  if (text.length > MAX_VIEW) text = text.slice(0, MAX_VIEW) + '\n[cut: too long. Pass a selector to focus on one part.]';
+  const count = top.items.filter((i) => i.id).length + frames.reduce((n, f) => n + f.result.items.filter((i) => i.id).length, 0);
+  return { text, url: top.url, title: top.title, count, changed };
 }
 
-function scrollPage(direction) {
-  const amount = Math.round(innerHeight * 0.85);
-  if (direction === 'top') scrollTo(0, 0);
-  else if (direction === 'bottom') scrollTo(0, document.documentElement.scrollHeight);
-  else scrollBy(0, direction === 'up' ? -amount : amount);
-  return { y: Math.round(scrollY), max: document.documentElement.scrollHeight - innerHeight };
+// Waits for the page to settle after an action, then reports what changed.
+async function afterPageAction(tabId, ms = 900) {
+  await sleep(ms);
+  await waitForTab(tabId, 10000);
+  const t = await chrome.tabs.get(tabId);
+  let view = null;
+  try { view = await pageView(tabId, { diff: true }); } catch {}
+  return { tab: t, text: `Tab id=${t.id} is now: ${t.title} (${t.url})${view?.text ? '\n' + view.text : ''}` };
 }
 
 function bingResultsInPage(limit) {
@@ -623,10 +589,54 @@ const int = (description) => ({ type: 'integer', description });
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
 const TAB_ID = int("Tab id from list_tabs. Omit to use the user's current tab.");
+const EL_ID = str('Element id from get_page_elements, e.g. "12", or "f3:7" for an element inside a frame.');
+const DECLINED = 'The user did not approve this. Do not retry it; ask them how to proceed.';
+const MIME = {
+  csv: 'text/csv', tsv: 'text/tab-separated-values', md: 'text/markdown', json: 'application/json', html: 'text/html', htm: 'text/html',
+  txt: 'text/plain', ics: 'text/calendar', xml: 'application/xml', svg: 'image/svg+xml', yaml: 'text/yaml', yml: 'text/yaml', js: 'text/javascript', css: 'text/css',
+};
+
+// Simple word-overlap ranking for local searches.
+function rank(list, query, textOf) {
+  const words = String(query || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1);
+  if (!words.length) return list;
+  return list
+    .map((x) => { const t = textOf(x).toLowerCase(); return { x, s: words.reduce((n, w) => n + (t.includes(w) ? 1 : 0), 0) }; })
+    .filter((r) => r.s > 0)
+    .sort((a, b) => b.s - a.s)
+    .map((r) => r.x);
+}
+
+async function bookmarkFolder(name) {
+  const found = (await chrome.bookmarks.search({ title: name })).find((b) => !b.url);
+  if (found) return found.id;
+  const [root] = await chrome.bookmarks.getTree();
+  const other = root.children?.find((c) => c.id === '2') || root.children?.[1] || root.children?.[0];
+  return (await chrome.bookmarks.create({ parentId: other.id, title: name })).id;
+}
+
+// Schedule from tool arguments (create_routine / update_routine).
+function scheduleFrom(a) {
+  if (a.schedule === 'once') {
+    let at = a.at ? new Date(String(a.at).trim().replace(' ', 'T')).getTime() : NaN;
+    if (!Number.isFinite(at)) at = Date.now() + Math.max(1, Number(a.in_minutes) || 60) * 60000;
+    return normalizeSchedule({ type: 'once', at });
+  }
+  return normalizeSchedule({ type: a.schedule, time: a.time, day: a.weekday, minutes: a.interval_minutes });
+}
+
+// Pages the agent reads go into the "past reads" log when memory is on.
+function noteRead(ctx, page) {
+  const m = ctx?.settings?.memory;
+  if (!m?.enabled || m.reads === false || ctx.sub) return;
+  addRead(page).catch(() => {});
+}
+
 
 export const TOOLS = [
   {
     name: 'web_search',
+    parallel: true,
     kind: 'search',
     clientSearch: true, // replaced by the provider's native search when available
     description:
@@ -659,6 +669,7 @@ export const TOOLS = [
   },
   {
     name: 'read_url',
+    parallel: true,
     kind: 'read',
     description:
       'Fetch a web page or document by URL and return its readable text. Use it on search results and links to get full details before answering.',
@@ -696,15 +707,18 @@ export const TOOLS = [
         }
       }
       if (!page || !page.text) return { content: `Could not extract any text from ${url}.` };
+      noteRead(ctx, { url: page.url || url, title: page.title, text: page.text });
       return {
         content: `Title: ${page.title}\nURL: ${page.url || url}\n\n${page.text}`,
         sources: [{ title: page.title || host(url), url: page.url || url }],
         detail: `${page.text.length.toLocaleString()} chars`,
+        url: page.url || url,
       };
     },
   },
   {
     name: 'list_tabs',
+    parallel: true,
     kind: 'tab',
     description: 'List the open browser tabs (id, title, URL, whether active).',
     parameters: obj({}),
@@ -719,6 +733,7 @@ export const TOOLS = [
   },
   {
     name: 'browser_info',
+    parallel: true,
     kind: 'read',
     description:
       'Get the installed Rold version, browser version, platform and current tab. Use this for questions about the installed build or the browser. Extensions cannot read browser-internal pages such as edge://extensions.',
@@ -744,12 +759,13 @@ export const TOOLS = [
   },
   {
     name: 'read_tab',
+    parallel: true,
     kind: 'read',
     description:
-      "Read the visible text of an open tab, including pages the user is logged into. For a browser-internal page (edge://, chrome://), captures its visible area instead. Defaults to the user's current tab. Use this when they say \"this page\".",
-    parameters: obj({ tab_id: TAB_ID }),
-    label: () => 'Reading your tab',
-    async run({ tab_id }) {
+      "Read the text of an open tab, including pages the user is logged into. For a browser-internal page (edge://, chrome://), captures its visible area instead. Defaults to the user's current tab. Use this when they say \"this page\". Pass selector (CSS) to read just one part of a long page.",
+    parameters: obj({ tab_id: TAB_ID, selector: str('CSS selector of the part to read (optional).') }),
+    label: (a) => (a.tab_id ? 'Reading a tab' : 'Reading your tab'),
+    async run({ tab_id, selector }, ctx) {
       const tab = await targetTab(tab_id);
       if (!isWebUrl(tab.url)) {
         const header = `Tab id=${tab.id}\nTitle: ${tab.title}\nURL: ${tab.url}\n\n`;
@@ -779,11 +795,14 @@ export const TOOLS = [
           detail: `Captured ${tab.title}`,
         };
       }
-      const page = await inject(tab.id, readPage, [MAX_TEXT]);
+      const page = await inject(tab.id, readPage, [MAX_TEXT, null, selector || '']);
+      if (page.error) return { content: page.error, isError: true, url: page.url };
+      if (!selector) noteRead(ctx, page);
       return {
         content: `Tab id=${tab.id}\nTitle: ${page.title}\nURL: ${page.url}\n\n${page.text || '(no text)'}`,
         sources: [{ title: page.title || host(page.url), url: page.url }],
         detail: page.title,
+        url: page.url,
       };
     },
   },
@@ -798,7 +817,7 @@ export const TOOLS = [
       const tab = await openAgentTab(normalizeUrl(url), ctx, !!active);
       await waitForTab(tab.id);
       const t = await chrome.tabs.get(tab.id);
-      return { content: `Opened tab id=${t.id}: ${t.title} (${t.url})` };
+      return { content: `Opened tab id=${t.id}: ${t.title} (${t.url})`, url: t.url };
     },
   },
   {
@@ -816,103 +835,109 @@ export const TOOLS = [
       await sleep(400);
       await waitForTab(tab.id);
       const t = await chrome.tabs.get(tab.id);
-      return { content: `Tab id=${t.id} is now at: ${t.title} (${t.url})` };
+      return { content: `Tab id=${t.id} is now at: ${t.title} (${t.url})`, url: t.url };
     },
   },
   {
     name: 'get_page_elements',
     kind: 'tab',
     browserControl: true,
+    parallel: true,
     description:
-      'List the interactive elements (links, buttons, inputs) on a tab, each with a numeric id. Call before click_element/type_text and again after the page changes.',
-    parameters: obj({ tab_id: TAB_ID }),
-    label: () => 'Scanning page controls',
-    async run({ tab_id }) {
+      'Get a structured view of a tab: headings, areas (navigation, forms, dialogs), and every interactive element with an id and its state (checked, expanded, current value, disabled). Covers shadow DOM and iframes (frame elements have ids like f3:7). Ids stay the same while the page lives. Call before click_element / type_text. Pass selector to focus on one part of a big page, include_text to also get the text around the controls.',
+    parameters: obj({
+      tab_id: TAB_ID,
+      selector: str('CSS selector to limit the view to one part of the page (optional).'),
+      include_text: { type: 'boolean', description: 'Also include paragraphs and other text (default false).' },
+    }),
+    label: (a) => (a.selector ? `Scanning ${String(a.selector).slice(0, 40)}` : 'Scanning page controls'),
+    async run({ tab_id, selector, include_text }) {
       const tab = await targetTab(tab_id);
-      const r = await inject(tab.id, collectElements, [250]);
-      return {
-        content: `Tab id=${tab.id} | ${r.title} | ${r.url}\n${r.elements.join('\n') || '(no interactive elements)'}`,
-        detail: `${r.elements.length} elements`,
-      };
+      if (!isWebUrl(tab.url)) return { content: `Tab id=${tab.id} (${tab.url}) is not a web page, so it can't be scanned.`, isError: true };
+      const v = await pageView(tab.id, { selector: selector || '', text: !!include_text, limit: include_text ? 250 : 300 });
+      if (v.error) return { content: v.error, isError: true };
+      return { content: `Tab id=${tab.id} | ${v.title} | ${v.url}\n${v.text}`, detail: `${v.count} elements`, url: v.url };
     },
   },
   {
     name: 'click_element',
     kind: 'click',
     browserControl: true,
-    description: 'Click an element by its id from get_page_elements. Set consequential=true for clicks that send, post, pay, buy, delete or submit.',
-    parameters: obj({ tab_id: TAB_ID, element_id: int('Element id from get_page_elements.'), consequential: CONSEQUENTIAL }, ['element_id']),
+    description: 'Click an element by its id from get_page_elements. Returns what changed on the page afterwards. Set consequential=true for clicks that send, post, pay, buy, delete or submit.',
+    parameters: obj({ tab_id: TAB_ID, element_id: EL_ID, consequential: CONSEQUENTIAL }, ['element_id']),
     label: (a) => `Clicking element ${a.element_id}`,
     async run({ tab_id, element_id, consequential }, ctx) {
       const tab = await targetTab(tab_id);
-      const d = await inject(tab.id, describeElement, [element_id]);
-      if (!d) return { content: 'Element not found. Call get_page_elements again.', isError: true };
+      const { frameId, local } = parseEl(element_id);
+      const d = await injectAt(tab.id, frameId, describeEl, [local]);
+      if (!d) return { content: 'Element not found (the page changed). Call get_page_elements again.', isError: true };
       const crucial = !!consequential || (!d.search && (d.submit || CRUCIAL.test(d.label)));
       const ok = await approve(ctx, `Click ${d.tag} “${d.label || '(no label)'}” on ${host(tab.url)}`, crucial);
-      if (!ok) return { content: 'The user did not approve this click. Do not retry it; ask them how to proceed.', isError: true };
-      const r = await inject(tab.id, clickElement, [element_id]);
+      if (!ok) return { content: DECLINED, isError: true };
+      const r = await injectAt(tab.id, frameId, clickEl, [local]);
       if (!r?.ok) return { content: r?.error || 'Click failed.', isError: true };
-      await sleep(1200);
-      await waitForTab(tab.id, 10000);
-      const t = await chrome.tabs.get(tab.id);
-      return { content: `Clicked. Tab is now: ${t.title} (${t.url})`, detail: d.label };
+      const after = await afterPageAction(tab.id, 900);
+      const warn = r.covered ? `\nWarning: ${r.covered} was on top of this element, so the page may not have received the click. Close that overlay first, or use click_at.` : '';
+      return { content: `Clicked ${d.tag} “${d.label}”.${warn}\n${after.text}`, detail: d.label, url: after.tab.url };
     },
   },
   {
     name: 'type_text',
     kind: 'type',
     browserControl: true,
-    description: 'Type text into an input, textarea or editable area by its id from get_page_elements (for a <select>, pass the option text). Optionally press Enter / submit afterwards.',
+    description: 'Type into an input, textarea or editable area by its id from get_page_elements (for a <select>, pass the option text). Replaces the current value unless append=true. Optionally press Enter / submit afterwards. Returns what changed on the page.',
     parameters: obj(
       {
         tab_id: TAB_ID,
-        element_id: int('Element id from get_page_elements.'),
-        text: str('Text to enter (replaces the current value).'),
+        element_id: EL_ID,
+        text: str('Text to enter.'),
+        append: { type: 'boolean', description: 'Add to the end of the current value instead of replacing it.' },
         submit: { type: 'boolean', description: 'Press Enter / submit the form afterwards.' },
         consequential: CONSEQUENTIAL,
       },
       ['element_id', 'text'],
     ),
     label: (a) => `Typing “${String(a.text || '').slice(0, 40)}”`,
-    async run({ tab_id, element_id, text, submit, consequential }, ctx) {
+    async run({ tab_id, element_id, text, append, submit, consequential }, ctx) {
       const tab = await targetTab(tab_id);
-      const d = await inject(tab.id, describeElement, [element_id]);
-      if (!d) return { content: 'Element not found. Call get_page_elements again.', isError: true };
+      const { frameId, local } = parseEl(element_id);
+      const d = await injectAt(tab.id, frameId, describeEl, [local]);
+      if (!d) return { content: 'Element not found (the page changed). Call get_page_elements again.', isError: true };
       if (d.password) return { content: 'Refused: that looks like a password, one-time code or payment field. Ask the user to fill it in.', isError: true };
       const crucial = !!consequential || (!!submit && !d.search);
       const ok = await approve(ctx, `Type “${text}” into “${d.label || d.tag}”${submit ? ' and submit' : ''} on ${host(tab.url)}`, crucial);
-      if (!ok) return { content: 'The user did not approve this. Do not retry it; ask them how to proceed.', isError: true };
-      const r = await inject(tab.id, typeIntoElement, [element_id, String(text), !!submit]);
+      if (!ok) return { content: DECLINED, isError: true };
+      const r = await injectAt(tab.id, frameId, typeEl, [local, String(text), !!submit, !!append]);
       if (!r?.ok) return { content: r?.error || 'Typing failed.', isError: true };
-      if (submit) { await sleep(1200); await waitForTab(tab.id, 10000); }
-      const t = await chrome.tabs.get(tab.id);
-      return { content: `Done. Tab is now: ${t.title} (${t.url})` };
+      const after = await afterPageAction(tab.id, submit ? 1200 : 300);
+      return { content: `Typed into “${d.label || d.tag}”.\n${after.text}`, url: after.tab.url };
     },
   },
   {
     name: 'scroll_page',
     kind: 'tab',
     browserControl: true,
-    description: 'Scroll a tab (useful before get_page_elements on long or lazy-loading pages).',
-    parameters: obj({ tab_id: TAB_ID, direction: { type: 'string', enum: ['down', 'up', 'top', 'bottom'] } }, ['direction']),
+    description: 'Scroll a tab, or one scrollable part of it (a list, a chat, a side panel) by giving an element id inside it. Useful before get_page_elements on long or lazy-loading pages.',
+    parameters: obj({ tab_id: TAB_ID, direction: { type: 'string', enum: ['down', 'up', 'top', 'bottom'] }, element_id: str('Scroll the scrollable area containing this element (optional).') }, ['direction']),
     label: (a) => `Scrolling ${a.direction}`,
-    async run({ tab_id, direction }) {
+    async run({ tab_id, direction, element_id }) {
       const tab = await targetTab(tab_id);
-      const r = await inject(tab.id, scrollPage, [direction]);
-      await sleep(500);
-      return { content: `Scrolled ${direction}. Position ${r.y}/${r.max}px.` };
+      const el = element_id == null || element_id === '' ? null : parseEl(element_id);
+      const r = await injectAt(tab.id, el?.frameId || 0, scrollEl, [direction, el ? el.local : null]);
+      await sleep(600);
+      return { content: `Scrolled ${direction}${r.element ? ' inside that area' : ''}. Position ${r.y}/${r.max}px.${r.y >= r.max - 2 && direction === 'down' ? ' (at the end)' : ''}` };
     },
   },
   {
     name: 'press_key',
     kind: 'type',
     browserControl: true,
-    description: 'Press a key on a tab: on an element from get_page_elements, or on whatever is focused. Use for Enter, Escape, Tab, arrows, PageDown etc.',
+    description: 'Press a key on a tab: on an element from get_page_elements, or on whatever is focused. Use for Enter, Escape (closes most popups and dialogs), Tab, arrows, PageDown etc.',
     parameters: obj(
       {
         tab_id: TAB_ID,
-        key: { type: 'string', enum: ['Enter', 'Escape', 'Tab', 'Backspace', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'] },
-        element_id: int('Element id from get_page_elements (optional).'),
+        key: { type: 'string', enum: ['Enter', 'Escape', 'Tab', 'Backspace', 'Delete', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'] },
+        element_id: str('Element id from get_page_elements (optional).'),
         consequential: CONSEQUENTIAL,
       },
       ['key'],
@@ -921,17 +946,185 @@ export const TOOLS = [
     async run({ tab_id, key, element_id, consequential }, ctx) {
       const tab = await targetTab(tab_id);
       const k = key === 'Space' ? ' ' : key;
-      const id = element_id == null || element_id === '' ? null : element_id;
-      const d = await inject(tab.id, describeElement, [id]);
+      const el = element_id == null || element_id === '' ? null : parseEl(element_id);
+      const frameId = el?.frameId || 0;
+      const d = await injectAt(tab.id, frameId, describeEl, [el ? el.local : null]);
       const crucial = !!consequential || (k === 'Enter' && !!d && !d.search && (d.multiline || d.submit || d.tag === 'input'));
       const ok = await approve(ctx, `Press ${key}${d?.label ? ` on “${d.label}”` : ''} on ${host(tab.url)}`, crucial);
-      if (!ok) return { content: 'The user did not approve this. Do not retry it; ask them how to proceed.', isError: true };
-      const r = await inject(tab.id, pressKey, [id, k]);
+      if (!ok) return { content: DECLINED, isError: true };
+      const r = await injectAt(tab.id, frameId, pressKeyEl, [el ? el.local : null, k]);
       if (!r?.ok) return { content: r?.error || 'Key press failed.', isError: true };
-      await sleep(k === 'Enter' ? 1200 : 300);
-      if (k === 'Enter') await waitForTab(tab.id, 10000);
-      const t = await chrome.tabs.get(tab.id);
-      return { content: `Pressed ${key}. Tab is now: ${t.title} (${t.url})` };
+      const after = await afterPageAction(tab.id, k === 'Enter' ? 1200 : 400);
+      return { content: `Pressed ${key}.\n${after.text}`, url: after.tab.url };
+    },
+  },
+  {
+    name: 'batch_actions',
+    kind: 'click',
+    browserControl: true,
+    description:
+      'Run several page actions on one tab in a row, without a turn in between: fill a whole form, open a menu and pick an item, type and submit. Stops at the first failure and reports how far it got. Element ids come from get_page_elements (elements that only appear after an earlier step can be used if you already know their ids). Returns what changed on the page at the end. Use single actions instead when each step depends on what the page shows next.',
+    parameters: obj(
+      {
+        tab_id: TAB_ID,
+        actions: {
+          type: 'array',
+          description: 'Steps in order (up to 20).',
+          items: obj(
+            {
+              action: { type: 'string', enum: ['click', 'type', 'key', 'scroll', 'wait', 'navigate'] },
+              element_id: str('For click, type, and optionally key or scroll.'),
+              text: str('For type: the text (for a <select>, the option).'),
+              append: { type: 'boolean', description: 'For type: add instead of replace.' },
+              submit: { type: 'boolean', description: 'For type: press Enter / submit after typing.' },
+              key: str('For key: Enter, Escape, Tab, Backspace, Delete, Space, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, PageUp, PageDown, Home, End.'),
+              direction: str('For scroll: down, up, top or bottom.'),
+              seconds: int('For wait: 1-10.'),
+              url: str('For navigate: the URL.'),
+            },
+            ['action'],
+          ),
+        },
+        consequential: CONSEQUENTIAL,
+      },
+      ['actions'],
+    ),
+    label: (a) => `Running ${(a.actions || []).length} page actions`,
+    async run({ tab_id, actions, consequential }, ctx) {
+      const tab = await targetTab(tab_id);
+      const steps = (Array.isArray(actions) ? actions : []).slice(0, 20);
+      if (!steps.length) return { content: 'No actions given.', isError: true };
+      const crucialStep = (s, d) =>
+        s.action === 'click' ? !d.search && (d.submit || CRUCIAL.test(d.label))
+        : s.action === 'type' ? !!s.submit && !d.search
+        : s.key === 'Enter' && !d.search && (d.multiline || d.submit || d.tag === 'input');
+      // One approval up front for the crucial steps that are already on the page.
+      const approved = new Set();
+      if (ctx.permission !== 'full') {
+        const crucial = [];
+        for (let i = 0; i < steps.length; i++) {
+          const s = steps[i];
+          if (!['click', 'type', 'key'].includes(s.action)) continue;
+          let d = null;
+          try {
+            const el = s.element_id == null || s.element_id === '' ? null : parseEl(s.element_id);
+            if (el || s.action === 'key') d = await injectAt(tab.id, el?.frameId || 0, describeEl, [el ? el.local : null]);
+          } catch {}
+          if (!d) continue;
+          if (s.action === 'type' && d.password) return { content: `Refused: step ${i + 1} types into a password, one-time code or payment field. Ask the user to fill it in.`, isError: true };
+          if (crucialStep(s, d)) { crucial.push(`${i + 1}. ${s.action} “${d.label || d.tag}”`); approved.add(i); }
+        }
+        if (crucial.length || consequential) {
+          const ok = await approve(ctx, `Run ${steps.length} actions on ${host(tab.url)}, including:\n${crucial.join('\n') || 'a consequential step'}`, true);
+          if (!ok) return { content: DECLINED, isError: true };
+          if (consequential) steps.forEach((_, i) => approved.add(i));
+        }
+      }
+      const log = [];
+      for (let i = 0; i < steps.length; i++) {
+        const s = steps[i];
+        await ctx.gate?.();
+        if (ctx.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        const n = `${i + 1}.`;
+        try {
+          const el = s.element_id == null || s.element_id === '' ? null : parseEl(s.element_id);
+          if (s.action === 'click' || s.action === 'type') {
+            if (!el) throw new Error('needs element_id');
+            const d = await injectAt(tab.id, el.frameId, describeEl, [el.local]);
+            if (!d) throw new Error(`element ${s.element_id} not found`);
+            if (s.action === 'type' && d.password) throw new Error('that is a password or payment field; ask the user to fill it in');
+            if (crucialStep(s, d) && !approved.has(i) && !(await approve(ctx, `${s.action === 'click' ? 'Click' : 'Type into'} “${d.label || d.tag}” on ${host(tab.url)}`, true))) {
+              log.push(`${n} ${s.action} “${d.label}”: not approved by the user. Stopped.`);
+              break;
+            }
+            const r = s.action === 'click'
+              ? await injectAt(tab.id, el.frameId, clickEl, [el.local])
+              : await injectAt(tab.id, el.frameId, typeEl, [el.local, String(s.text ?? ''), !!s.submit, !!s.append]);
+            if (!r?.ok) throw new Error(r?.error || 'failed');
+            log.push(`${n} ${s.action === 'click' ? 'clicked' : 'typed into'} ${d.tag} “${d.label}”${r.covered ? ` (warning: ${r.covered} was on top of it)` : ''}`);
+            await sleep(s.action === 'click' || s.submit ? 700 : 150);
+            if (s.action === 'click' || s.submit) await waitForTab(tab.id, 8000);
+          } else if (s.action === 'key') {
+            const k = s.key === 'Space' ? ' ' : String(s.key || '');
+            if (!k) throw new Error('needs key');
+            if (k === 'Enter' && !approved.has(i)) {
+              const d = await injectAt(tab.id, el?.frameId || 0, describeEl, [el ? el.local : null]);
+              if (d && crucialStep(s, d) && !(await approve(ctx, `Press Enter on “${d.label || d.tag}” on ${host(tab.url)}`, true))) {
+                log.push(`${n} Enter: not approved by the user. Stopped.`);
+                break;
+              }
+            }
+            const r = await injectAt(tab.id, el?.frameId || 0, pressKeyEl, [el ? el.local : null, k]);
+            if (!r?.ok) throw new Error(r?.error || 'failed');
+            log.push(`${n} pressed ${s.key}`);
+            await sleep(k === 'Enter' ? 900 : 200);
+            if (k === 'Enter') await waitForTab(tab.id, 8000);
+          } else if (s.action === 'scroll') {
+            const r = await injectAt(tab.id, el?.frameId || 0, scrollEl, [s.direction || 'down', el ? el.local : null]);
+            log.push(`${n} scrolled ${s.direction || 'down'} (${r.y}/${r.max}px)`);
+            await sleep(400);
+          } else if (s.action === 'wait') {
+            const sec = Math.max(1, Math.min(10, s.seconds || 2));
+            await sleep(sec * 1000);
+            log.push(`${n} waited ${sec}s`);
+          } else if (s.action === 'navigate') {
+            await chrome.tabs.update(tab.id, { url: normalizeUrl(s.url) });
+            await sleep(400);
+            await waitForTab(tab.id);
+            log.push(`${n} opened ${s.url}`);
+          } else throw new Error(`unknown action "${s.action}"`);
+        } catch (e) {
+          if (e.name === 'AbortError') throw e;
+          log.push(`${n} ${s.action} failed: ${e.message}. Stopped here; later steps did not run.`);
+          break;
+        }
+      }
+      const after = await afterPageAction(tab.id, 300);
+      const failed = /failed:|not approved/.test(log[log.length - 1] || '');
+      return { content: `${log.join('\n')}\n\n${after.text}`, isError: failed, detail: `${log.length}/${steps.length} steps`, url: after.tab.url };
+    },
+  },
+  {
+    name: 'run_js',
+    kind: 'code',
+    browserControl: true,
+    description:
+      "Run JavaScript inside a tab's page, in the page's own context: full DOM access, the page's variables, and its logged-in session (fetch() sends the site's cookies). Write the body of an async function and return a value (objects come back as JSON, elements as HTML). Best for pulling structured data out of complex pages (tables, long lists, JSON embedded in the page), reading what the element view misses, or calling the site's own JSON endpoints. Set consequential=true if the code sends, posts, buys, deletes or changes anything; never use it to get around an approval.",
+    parameters: obj({ tab_id: TAB_ID, code: str('Body of an async function. Use return to send back a result.'), consequential: CONSEQUENTIAL }, ['code']),
+    label: () => 'Running a script in the page',
+    async run({ tab_id, code, consequential }, ctx) {
+      const tab = await targetTab(tab_id);
+      if (!isWebUrl(tab.url)) return { content: "Can't run scripts on browser-internal pages.", isError: true };
+      code = String(code || '');
+      const ok = await approve(ctx, `Run a script on ${host(tab.url)}:\n${code.slice(0, 400)}`, !!consequential);
+      if (!ok) return { content: DECLINED, isError: true };
+      let r;
+      try {
+        const [res] = await withTimeout(
+          chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: runInPage, args: [code] }),
+          30000, 'The script took longer than 30 seconds.');
+        r = res?.result;
+      } catch (e) {
+        r = { ok: false, error: e.message };
+      }
+      // Pages whose security policy forbids eval still run code through the debugger.
+      if (r && !r.ok && r.blocked && ctx.computer) {
+        await attachTab(tab, ctx);
+        const ev = await cdp(tab.id, 'Runtime.evaluate', {
+          expression: `(async () => {\n${code}\n})()`, awaitPromise: true, returnByValue: true, userGesture: true, timeout: 30000,
+        });
+        if (ev.exceptionDetails) r = { ok: false, error: ev.exceptionDetails.exception?.description || ev.exceptionDetails.text };
+        else {
+          const v = ev.result?.value;
+          r = { ok: true, value: v === undefined ? 'undefined' : typeof v === 'string' ? v : JSON.stringify(v, null, 1) };
+        }
+      }
+      if (!r?.ok) {
+        const hint = r?.blocked && !ctx.computer ? ' (this site blocks injected code; with computer use on in Settings, Rold can run it another way)' : '';
+        return { content: `Script error: ${r?.error || 'no result'}${hint}`, isError: true };
+      }
+      const out = String(r.value);
+      return { content: out.length > 20000 ? `${out.slice(0, 20000)}\n[cut, ${out.length} characters in total]` : out, detail: `${out.length.toLocaleString()} chars`, url: tab.url };
     },
   },
   {
@@ -967,12 +1160,14 @@ export const TOOLS = [
     kind: 'screen',
     needsComputer: true,
     description:
-      'See a tab: returns a screenshot of its visible area. Use it to understand visual layouts, canvas apps, maps, editors, charts and images, and to find x/y coordinates for click_at, scroll_at and drag. Works on background tabs.',
-    parameters: obj({ tab_id: TAB_ID }),
-    label: () => 'Looking at the screen',
-    async run({ tab_id }, ctx) {
+      'See a tab: returns a screenshot of its visible area. Use it to understand visual layouts, canvas apps, maps, editors, charts and images, and to find x/y coordinates for click_at, scroll_at and drag. Works on background tabs. Set show_user=true to also show the image under your answer, as proof that a browser task is done or when the user asked to see something.',
+    parameters: obj({ tab_id: TAB_ID, show_user: { type: 'boolean', description: 'Also show this screenshot to the user in the chat.' } }),
+    label: (a) => (a.show_user ? 'Taking a screenshot for you' : 'Looking at the screen'),
+    async run({ tab_id, show_user }, ctx) {
       const tab = await controlTab(tab_id, ctx);
-      return screenshotResult(tab);
+      const r = await screenshotResult(tab);
+      if (!show_user || !r.image) return { ...r, url: tab.url };
+      return { ...r, url: tab.url, showUser: true, content: r.content + '\nThis screenshot is shown to the user under your answer.' };
     },
   },
   {
@@ -1114,6 +1309,7 @@ export const TOOLS = [
   },
   {
     name: 'search_history',
+    parallel: true,
     kind: 'search',
     needsHistory: true,
     description: "Search the user's browsing history (titles and URLs) to find pages they visited before.",
@@ -1171,22 +1367,24 @@ export const TOOLS = [
     kind: 'routine',
     interactive: true,
     description:
-      'Schedule a recurring task. Use when the user wants something done regularly ("every morning", "check daily", "weekly summary"). By default each run starts a new chat; set continue_this_chat=true to wake this chat instead. The user must approve.',
+      'Schedule a task for later: repeating ("every morning", "check daily", "weekly summary") or once ("remind me at 5", "check back in an hour whether the order shipped"). By default each run starts a new chat; set continue_this_chat=true to wake this chat instead, which suits checking back on the current task. The user must approve.',
     parameters: obj(
       {
         name: str('Short name.'),
         instructions: str('Complete, self-contained instructions for each run (runs do not see this chat).'),
-        schedule: { type: 'string', enum: ['interval', 'daily', 'weekdays', 'weekly'] },
+        schedule: { type: 'string', enum: ['interval', 'daily', 'weekdays', 'weekly', 'once'] },
         time: str('Local time HH:MM for daily / weekdays / weekly.'),
         weekday: int('0 = Sunday … 6 = Saturday, for weekly.'),
         interval_minutes: int('For interval (minimum 5).'),
+        in_minutes: int('For once: run this many minutes from now.'),
+        at: str('For once: local date and time, YYYY-MM-DD HH:MM.'),
         continue_this_chat: { type: 'boolean', description: 'Wake this chat on each run instead of starting a new one.' },
       },
       ['name', 'instructions', 'schedule'],
     ),
     label: (a) => `Scheduling “${a.name}”`,
     async run(a, ctx) {
-      const schedule = normalizeSchedule({ type: a.schedule, time: a.time, day: a.weekday, minutes: a.interval_minutes });
+      const schedule = scheduleFrom(a);
       const heartbeat = !!a.continue_this_chat && !!ctx.chatId;
       const desc = `${describeSchedule(schedule)}${heartbeat ? ', continuing this chat' : ''}`;
       const ok = await ctx.confirm(`Create routine “${a.name}”: ${desc}`);
@@ -1200,15 +1398,309 @@ export const TOOLS = [
       return { content: `Routine created: ${r.name} (${desc}). First run: ${new Date(r.nextRun).toLocaleString()}. The user can manage it from Routines in the sidebar.`, detail: desc };
     },
   },
+  {
+    name: 'list_routines',
+    kind: 'routine',
+    parallel: true,
+    description: "List the user's scheduled routines: id, schedule, status, next run, last run and instructions.",
+    parameters: obj({}),
+    label: () => 'Looking at routines',
+    async run() {
+      const all = Object.values(await getRoutines()).sort((a, b) => (b.created || 0) - (a.created || 0));
+      if (!all.length) return { content: 'There are no routines.' };
+      return {
+        content: all.map((r) => {
+          const last = r.runs?.[0];
+          return `${r.id} | ${r.name} | ${describeSchedule(r.schedule)} | ${r.active ? 'active' : 'paused'} | ${r.kind === 'heartbeat' ? 'continues a chat' : 'new chat each run'}` +
+            ` | next: ${r.active && r.nextRun ? new Date(r.nextRun).toLocaleString() : 'none'} | last run: ${last ? `${new Date(last.ts).toLocaleString()} (${last.status}${last.note ? `: ${last.note}` : ''})` : 'never'}` +
+            `\n   Instructions: ${String(r.instructions).slice(0, 300)}`;
+        }).join('\n'),
+        detail: `${all.length} routines`,
+      };
+    },
+  },
+  {
+    name: 'update_routine',
+    kind: 'routine',
+    description:
+      'Change a routine by id (from list_routines): pause, resume, run_now, delete, or edit its name, instructions or schedule. A routine may pause itself once its job is done, for example a check that should stop when the thing it waits for has happened.',
+    parameters: obj(
+      {
+        id: str('Routine id.'),
+        action: { type: 'string', enum: ['pause', 'resume', 'run_now', 'delete', 'edit'] },
+        name: str('For edit: new name.'),
+        instructions: str('For edit: new self-contained instructions.'),
+        schedule: { type: 'string', enum: ['interval', 'daily', 'weekdays', 'weekly', 'once'] },
+        time: str('Local time HH:MM for daily / weekdays / weekly.'),
+        weekday: int('0 = Sunday … 6 = Saturday, for weekly.'),
+        interval_minutes: int('For interval (minimum 5).'),
+        in_minutes: int('For once: run this many minutes from now.'),
+        at: str('For once: local date and time, YYYY-MM-DD HH:MM.'),
+      },
+      ['id', 'action'],
+    ),
+    label: (a) => `${{ pause: 'Pausing', resume: 'Resuming', run_now: 'Running', delete: 'Deleting', edit: 'Editing' }[a.action] || 'Updating'} a routine`,
+    async run(a, ctx) {
+      const all = await getRoutines();
+      const r = all[a.id];
+      if (!r) return { content: `No routine with id ${a.id}. Use list_routines.`, isError: true };
+      if (a.action === 'pause' || a.action === 'resume') {
+        r.active = a.action === 'resume';
+        if (r.active) r.nextRun = nextRunTime(r.schedule);
+        await saveRoutine(r);
+        return { content: `Routine “${r.name}” is ${r.active ? `active again. Next run: ${new Date(r.nextRun).toLocaleString()}` : 'paused'}.` };
+      }
+      if (a.action === 'run_now') {
+        const res = await chrome.runtime.sendMessage({ type: 'runRoutine', id: r.id }).catch((e) => ({ ok: false, error: e.message }));
+        return res?.ok ? { content: `Started a run of “${r.name}” in the background.` } : { content: `Could not start it: ${res?.error || 'unknown error'}.`, isError: true };
+      }
+      if (a.action === 'delete') {
+        if (!(await ctx.confirm(`Delete routine “${r.name}”`))) return { content: 'The user did not approve deleting it.', isError: true };
+        await deleteRoutine(r.id);
+        return { content: `Deleted routine “${r.name}”.` };
+      }
+      const next = { ...r };
+      if (a.name) next.name = String(a.name).slice(0, 80);
+      if (a.instructions) next.instructions = String(a.instructions);
+      if (a.schedule) next.schedule = scheduleFrom(a);
+      const desc = describeSchedule(next.schedule);
+      if (!(await ctx.confirm(`Change routine “${r.name}”: ${next.name !== r.name ? `rename to “${next.name}”, ` : ''}${a.instructions ? 'new instructions, ' : ''}${desc}`))) {
+        return { content: 'The user did not approve the change.', isError: true };
+      }
+      next.nextRun = nextRunTime(next.schedule);
+      await saveRoutine(next);
+      return { content: `Updated “${next.name}” (${desc}). Next run: ${new Date(next.nextRun).toLocaleString()}.` };
+    },
+  },
+  {
+    name: 'read_skill',
+    kind: 'read',
+    parallel: true,
+    description: 'Load a site guide by name (see "Site guides" in your instructions): direct URLs, search operators, how the site behaves, and what counts as consequential there. Guides also load by themselves the first time you visit a matching site.',
+    parameters: obj({ name: str('Guide name, e.g. gmail.') }, ['name']),
+    label: (a) => `Reading the ${a.name} guide`,
+    async run({ name }, ctx) {
+      const s = getSkill(name);
+      if (!s) return { content: `No guide named "${name}". Available: ${SKILLS.map((x) => x.name).join(', ')}.`, isError: true };
+      ctx.skillsSeen?.add(s.name);
+      return { content: skillText(s), detail: s.title };
+    },
+  },
+  {
+    name: 'update_todos',
+    kind: 'todo',
+    silent: true,
+    description:
+      'Show the user a checklist for a multi-step task (3 or more steps) and keep it current. Send the whole list every time, with each item\'s status. Mark an item in_progress when you start it and done when it is verified; use blocked (with the reason in the text) for anything you could not finish. Skip it for quick questions.',
+    parameters: obj(
+      {
+        todos: {
+          type: 'array',
+          items: obj({ text: str('The step, short.'), status: { type: 'string', enum: ['pending', 'in_progress', 'done', 'blocked'] } }, ['text', 'status']),
+        },
+      },
+      ['todos'],
+    ),
+    label: () => 'Updating the checklist',
+    async run({ todos }) {
+      const list = (Array.isArray(todos) ? todos : []).slice(0, 25)
+        .map((t) => ({ text: String(t?.text || '').slice(0, 200), status: ['pending', 'in_progress', 'done', 'blocked'].includes(t?.status) ? t.status : 'pending' }))
+        .filter((t) => t.text);
+      const done = list.filter((t) => t.status === 'done').length;
+      return { content: `Checklist updated (${done}/${list.length} done).`, todos: list };
+    },
+  },
+  {
+    name: 'ask_user',
+    kind: 'ask',
+    interactive: true,
+    description:
+      'Ask the user a question and wait for the answer. Only for decisions you truly cannot make yourself: a real choice between options with different outcomes, or details only they know. Ask everything you need in one question, offer short options when you can with your recommendation first, and never ask for a permission you already have or to confirm what they already said.',
+    parameters: obj(
+      {
+        question: str('The question, self-contained.'),
+        options: { type: 'array', items: { type: 'string' }, description: 'Up to 6 short answers to pick from, recommended first (optional).' },
+        allow_text: { type: 'boolean', description: 'Let the user type their own answer (default true).' },
+      },
+      ['question'],
+    ),
+    label: (a) => `Asking: ${String(a.question || '').slice(0, 80)}`,
+    async run({ question, options, allow_text }, ctx) {
+      if (!ctx.ask) return { content: 'No one can answer right now. Pick the most sensible option, say what you assumed, and continue.' };
+      const ans = await ctx.ask({
+        question: String(question || ''),
+        options: (Array.isArray(options) ? options : []).map((o) => String(o).slice(0, 120)).filter(Boolean).slice(0, 6),
+        allowText: allow_text !== false,
+      });
+      if (ans == null || ans === '') return { content: 'The user skipped the question. Continue with the most sensible default and say what you assumed.', detail: 'Skipped' };
+      return { content: `The user answered: ${ans}`, detail: String(ans).slice(0, 120) };
+    },
+  },
+  {
+    name: 'delegate',
+    kind: 'delegate',
+    noSub: true,
+    description:
+      'Send independent research jobs to helper agents that work at the same time (up to 4). Each helper can search the web, read pages and read tabs, but cannot click, type or see this chat. Give each a complete brief: what to find, where to look if you know, and exactly what to return (with source links). Use it to compare several options, check many sources, or research separate topics in parallel. Their reports come back together.',
+    parameters: obj({ tasks: { type: 'array', items: { type: 'string' }, description: '1-4 self-contained briefs.' } }, ['tasks']),
+    label: (a) => { const n = (a.tasks || []).length; return `Sending ${n} helper${n === 1 ? '' : 's'} to research`; },
+    async run({ tasks }, ctx) {
+      const list = (Array.isArray(tasks) ? tasks : []).map((t) => String(t || '').trim()).filter(Boolean).slice(0, 4);
+      if (!list.length) return { content: 'Give at least one task.', isError: true };
+      if (!ctx.delegate) return { content: 'Helpers are not available here. Do the research yourself.', isError: true };
+      const out = await ctx.delegate(list);
+      return { content: out.map((r, i) => `## Helper ${i + 1}: ${list[i].slice(0, 120)}\n${r}`).join('\n\n'), detail: `${list.length} reports` };
+    },
+  },
+  {
+    name: 'save_file',
+    kind: 'file',
+    available: () => !!chrome.downloads,
+    description:
+      "Save content you produced as a file in the user's Downloads folder (in a Rold subfolder): CSV for spreadsheets, Markdown, JSON, HTML, TXT, ICS calendar files, and so on. Use it when the user wants a file or an export, or the output is too long to read in chat.",
+    parameters: obj({ filename: str('File name with extension, e.g. prices.csv.'), content: str('The full file content.') }, ['filename', 'content']),
+    label: (a) => `Saving ${String(a.filename || 'a file').slice(0, 60)}`,
+    async run({ filename, content }) {
+      const name = String(filename || 'rold.txt').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').replace(/^\.+/, '').slice(0, 120) || 'rold.txt';
+      const ext = (name.match(/\.([a-z0-9]+)$/i)?.[1] || 'txt').toLowerCase();
+      const mime = MIME[ext] || 'text/plain';
+      const text = String(content ?? '');
+      const blob = new Blob([ext === 'csv' ? '﻿' + text : text], { type: `${mime};charset=utf-8` });
+      const url = URL.createObjectURL(blob);
+      try {
+        const id = await chrome.downloads.download({ url, filename: `Rold/${name}`, conflictAction: 'uniquify', saveAs: false });
+        return { content: `Saved as Downloads/Rold/${name} (${blob.size.toLocaleString()} bytes, download id ${id}).`, detail: name };
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      }
+    },
+  },
+  {
+    name: 'download_url',
+    kind: 'file',
+    browserControl: true,
+    available: () => !!chrome.downloads,
+    description: "Download a file from a URL into the user's Downloads folder (a PDF, an image, an export link). Uses the user's browser session.",
+    parameters: obj({ url: str('Absolute http(s) URL of the file.'), filename: str('File name to save as (optional).') }, ['url']),
+    label: (a) => `Downloading from ${host(a.url)}`,
+    async run({ url, filename }, ctx) {
+      url = normalizeUrl(url);
+      if (!(await approve(ctx, `Download ${url}`, true))) return { content: DECLINED, isError: true };
+      const opts = { url, conflictAction: 'uniquify', saveAs: false };
+      if (filename) opts.filename = `Rold/${String(filename).replace(/[\\/:*?"<>|]+/g, '-').slice(0, 120)}`;
+      const id = await chrome.downloads.download(opts);
+      return { content: `Download started (id ${id}). It goes to the Downloads folder.`, detail: host(url) };
+    },
+  },
+  {
+    name: 'search_bookmarks',
+    kind: 'search',
+    parallel: true,
+    needsExtra: 'bookmarks',
+    available: () => !!chrome.bookmarks,
+    description: "Search the user's bookmarks by words in the title or URL. With no query, lists the most recently added ones.",
+    parameters: obj({ query: str('Words to look for (optional).'), max_results: int('1-50 (default 25).') }),
+    label: (a) => (a.query ? `Searching bookmarks for “${a.query}”` : 'Looking at recent bookmarks'),
+    async run({ query, max_results }) {
+      const n = Math.max(1, Math.min(50, max_results || 25));
+      const items = query ? await chrome.bookmarks.search(String(query)) : await chrome.bookmarks.getRecent(n);
+      const list = items.filter((b) => b.url).slice(0, n);
+      return {
+        content: list.map((b) => `${b.title || '(no title)'} | ${b.url}${b.dateAdded ? ` | added ${new Date(b.dateAdded).toLocaleDateString()}` : ''}`).join('\n') || 'No bookmarks found.',
+        detail: `${list.length} bookmarks`,
+      };
+    },
+  },
+  {
+    name: 'add_bookmark',
+    kind: 'memory',
+    browserControl: true,
+    needsExtra: 'bookmarks',
+    available: () => !!chrome.bookmarks,
+    description: 'Bookmark a page for the user. It goes into a "Rold" folder under Other bookmarks unless you name another folder.',
+    parameters: obj({ url: str('Page URL.'), title: str('Bookmark title (optional).'), folder: str('Folder name (optional).') }, ['url']),
+    label: (a) => `Bookmarking ${host(a.url)}`,
+    async run({ url, title, folder }) {
+      url = normalizeUrl(url);
+      const parentId = await bookmarkFolder(String(folder || 'Rold').slice(0, 80));
+      const b = await chrome.bookmarks.create({ parentId, title: String(title || url).slice(0, 200), url });
+      return { content: `Bookmarked “${b.title}” in ${folder || 'Rold'}.` };
+    },
+  },
+  {
+    name: 'recently_closed',
+    kind: 'tab',
+    parallel: true,
+    needsExtra: 'sessions',
+    available: () => !!chrome.sessions,
+    description: 'List tabs and windows the user closed recently, newest first. Pass restore with a session id to reopen one.',
+    parameters: obj({ restore: str('Session id to reopen (optional).') }),
+    label: (a) => (a.restore ? 'Reopening a closed tab' : 'Looking at recently closed tabs'),
+    async run({ restore }, ctx) {
+      if (restore) {
+        if (ctx.permission === 'read') return { content: 'Reopening tabs needs Guard or Full access.', isError: true };
+        const s = await chrome.sessions.restore(String(restore));
+        const t = s?.tab || s?.window?.tabs?.[0];
+        return { content: `Reopened ${s?.window ? `a window with ${s.window.tabs?.length || 0} tabs` : `tab id=${t?.id}: ${t?.title} (${t?.url})`}.` };
+      }
+      const list = await chrome.sessions.getRecentlyClosed({ maxResults: 25 });
+      const when = (s) => new Date((s.lastModified || 0) * 1000).toLocaleString();
+      return {
+        content: list.map((s) => s.tab
+          ? `tab ${s.tab.sessionId} | ${when(s)} | ${s.tab.title} | ${s.tab.url}`
+          : `window ${s.window?.sessionId} | ${when(s)} | ${s.window?.tabs?.length || 0} tabs: ${(s.window?.tabs || []).slice(0, 4).map((t) => t.title).join('; ')}`).join('\n') || 'Nothing was closed recently.',
+        detail: `${list.length} items`,
+      };
+    },
+  },
+  {
+    name: 'search_memory',
+    kind: 'memory',
+    needsMemory: true,
+    parallel: true,
+    description: 'Search everything you remember about the user and past tasks. Your instructions only show the most recent memories, so search when something older may be relevant.',
+    parameters: obj({ query: str('Words to look for.') }, ['query']),
+    label: (a) => `Searching memory for “${a.query}”`,
+    async run({ query }, ctx) {
+      const list = await getMemories(ctx.settings);
+      const hits = rank(list, query, (m) => m.text).slice(0, 25);
+      return {
+        content: hits.map((m) => `[${m.id}] ${m.kind === 'episodic' ? `(task, ${new Date(m.updated || m.created).toLocaleDateString()}) ` : ''}${m.text}`).join('\n') || 'Nothing matches.',
+        detail: `${hits.length} memories`,
+      };
+    },
+  },
+  {
+    name: 'search_past_reads',
+    kind: 'search',
+    needsMemory: true,
+    needsReads: true,
+    parallel: true,
+    description: 'Search pages you read in earlier tasks (title, URL, opening text, date), newest first. Use it when the user refers to something you looked at before.',
+    parameters: obj({ query: str('Words to look for (empty = most recent).') }),
+    label: (a) => (a.query ? `Searching past reads for “${a.query}”` : 'Looking at recent reads'),
+    async run({ query }) {
+      const list = (await getReads()).slice().reverse();
+      const hits = (query ? rank(list, query, (r) => `${r.title} ${r.url} ${r.excerpt}`) : list).slice(0, 20);
+      return {
+        content: hits.map((r) => `${new Date(r.ts).toLocaleString()} | ${r.title || '(no title)'} | ${r.url}\n   ${r.excerpt.slice(0, 240)}`).join('\n') || 'Nothing matches.',
+        detail: `${hits.length} pages`,
+      };
+    },
+  },
 ];
 
-export function selectTools({ nativeSearch, permission, memory, history, headless, computer }) {
+export function selectTools({ nativeSearch, permission, memory, history, headless, computer, sub = false, extras = {}, reads = true }) {
   return TOOLS.filter((t) =>
     !(t.clientSearch && nativeSearch) &&
+    !(t.available && !t.available()) &&
+    !(t.noSub && sub) &&
     !(t.needsComputer && !computer) &&
     !(t.browserControl && permission === 'read') &&
     !(t.needsMemory && !memory) &&
     !(t.needsHistory && !history) &&
+    !(t.needsExtra && !extras?.[t.needsExtra]) && // optional permissions the user turned on in Settings
+    !(t.needsReads && !reads) &&
     !(t.interactive && headless));
 }
 

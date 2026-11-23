@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Rold visual</title>
+<style>html,body{margin:0;background:transparent}</style>
+</head>
+<body>
+<script>
+// Inline in visual.html on purpose: a sandboxed page has an opaque origin, so loading a
+// separate script file from the extension is not reliable.
+// Sandboxed page that renders a ```visual block from an answer. It runs with no extension
+// access and no network (see content_security_policy.sandbox in the manifest). The parent
+// sends the HTML and theme colors; this page reports its height back.
+
+(() => {
+  let done = false;
+
+  // Runs inside the rendered document: reports size and errors to the parent.
+  function reporter() {
+    // Measure the body, not the root: the root is never shorter than the frame, so it could only grow.
+    const height = () => Math.ceil(Math.max(document.body.scrollHeight, document.body.getBoundingClientRect().height));
+    const send = () => parent.postMessage({ type: 'rold-visual-size', h: height() }, '*');
+    new ResizeObserver(send).observe(document.body);
+    window.addEventListener('load', send);
+    window.addEventListener('error', (e) => {
+      const p = document.createElement('pre');
+      p.className = 'rold-visual-error';
+      p.textContent = 'This visual hit an error: ' + (e.message || 'unknown error');
+      document.body.append(p);
+      send();
+    });
+    send();
+  }
+
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (done || !d || d.type !== 'rold-visual' || typeof d.html !== 'string') return;
+    done = true;
+    const vars = Object.entries(d.theme || {})
+      .filter(([k, v]) => /^--[\w-]+$/.test(k) && typeof v === 'string' && !/[;{}<]/.test(v))
+      .map(([k, v]) => `${k}:${v}`).join(';');
+    const scheme = d.dark ? 'dark' : 'light';
+    const base = `:root{${vars};color-scheme:${scheme}}
+html,body{margin:0;padding:0;background:transparent;color:var(--text);font:14px/1.5 ${d.font || 'system-ui, sans-serif'}}
+*{box-sizing:border-box}
+body{padding:4px 2px}
+svg{max-width:100%}
+.rold-visual-error{color:#c33;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap}`;
+    const html = /<html[\s>]/i.test(d.html) ? d.html.replace(/<head[^>]*>/i, (m) => `${m}<style>${base}</style>`) : `<!doctype html><html><head><meta charset="utf-8"><style>${base}</style></head><body>${d.html}</body></html>`;
+    document.open();
+    document.write(html);
+    document.write(`<script>(${reporter})()<\/script>`);
+    document.close();
+  });
+})();
+</script>
+</body>
+</html>

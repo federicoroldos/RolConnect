@@ -38,7 +38,8 @@ const DEFAULTS = {
   computerUse: true, // screenshots + real mouse/keyboard input through the debugger
   permission: 'guard', // 'read' | 'guard' | 'full'
   followUp: 'steer', // messages sent while the agent works: 'steer' | 'queue'
-  memory: { enabled: true, history: false, retention: 'never' }, // retention: 'never' | '30d' | '90d'
+  memory: { enabled: true, history: false, retention: 'never', reads: true }, // retention: 'never' | '30d' | '90d'; reads = keep a log of pages read
+  extras: { bookmarks: false, sessions: false }, // optional browser permissions the user turned on
   theme: 'system',
 };
 
@@ -167,4 +168,23 @@ export async function deleteRoutine(id) {
   const all = await getRoutines();
   delete all[id];
   await chrome.storage.local.set({ routines: all });
+}
+
+// ---- past reads: pages the agent read, so it can find them again later (memory on only) ----
+const MAX_READS = 300;
+
+export async function getReads() {
+  const { reads } = await chrome.storage.local.get('reads');
+  return Array.isArray(reads) ? reads : [];
+}
+
+export async function addRead({ url, title, text }) {
+  if (!url || !/^https?:/.test(url)) return;
+  const list = (await getReads()).filter((r) => r.url !== url);
+  list.push({ url, title: String(title || '').slice(0, 200), excerpt: String(text || '').replace(/\s+/g, ' ').slice(0, 600), ts: Date.now() });
+  await chrome.storage.local.set({ reads: list.slice(-MAX_READS) });
+}
+
+export async function clearReads() {
+  await chrome.storage.local.set({ reads: [] });
 }

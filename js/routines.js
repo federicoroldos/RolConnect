@@ -5,13 +5,17 @@
 // cron      = starts a new chat on every run
 // heartbeat = wakes an existing chat and continues it
 // schedule  = { type: 'interval', minutes } | { type: 'daily' | 'weekdays', time: 'HH:MM' }
-//           | { type: 'weekly', day: 0-6 (0 = Sunday), time: 'HH:MM' }
+//           | { type: 'weekly', day: 0-6 (0 = Sunday), time: 'HH:MM' } | { type: 'once', at: timestamp }
 
 export const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MIN_INTERVAL = 5;
 
 export function normalizeSchedule(s = {}) {
-  const type = ['interval', 'daily', 'weekdays', 'weekly'].includes(s.type) ? s.type : 'daily';
+  const type = ['interval', 'daily', 'weekdays', 'weekly', 'once'].includes(s.type) ? s.type : 'daily';
+  if (type === 'once') {
+    const at = Number(s.at) || Date.now() + Math.max(1, Math.round(Number(s.minutes) || 60)) * 60000;
+    return { type, at };
+  }
   if (type === 'interval') return { type, minutes: Math.max(MIN_INTERVAL, Math.round(Number(s.minutes) || 60)) };
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(s.time || '').trim());
   const time = m && +m[1] < 24 && +m[2] < 60 ? `${m[1].padStart(2, '0')}:${m[2]}` : '09:00';
@@ -28,6 +32,7 @@ function dayMatches(s, day) {
 // The next time the schedule fires after `from`.
 export function nextRunTime(schedule, from = Date.now()) {
   const s = normalizeSchedule(schedule);
+  if (s.type === 'once') return Math.max(s.at, from + 1000);
   if (s.type === 'interval') return from + s.minutes * 60000;
   const [h, m] = s.time.split(':').map(Number);
   const d = new Date(from);
@@ -42,6 +47,7 @@ export function nextRunTime(schedule, from = Date.now()) {
 
 export function describeSchedule(schedule) {
   const s = normalizeSchedule(schedule);
+  if (s.type === 'once') return `Once, ${new Date(s.at).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
   if (s.type === 'interval') {
     const m = s.minutes;
     return m % 1440 === 0 ? `Every ${m / 1440 === 1 ? 'day' : `${m / 1440} days`}`

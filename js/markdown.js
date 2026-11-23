@@ -84,6 +84,76 @@ function renderList(block) {
     .join('')}</${tag}>`;
 }
 
+// ---------------------------------------------------------------------------
+// Draft cards: ```email-draft, ```message-draft, ```post-draft and ```event-draft blocks
+// become cards with Copy and Open buttons.
+
+const DRAFTS = { 'email-draft': 'Email draft', 'message-draft': 'Message draft', 'post-draft': 'Post draft', 'event-draft': 'Event' };
+const DRAFT_FIELDS = new Set(['to', 'cc', 'bcc', 'subject', 'title', 'start', 'end', 'location', 'platform', 'channel', 'when']);
+const FIELD_NAMES = { to: 'To', cc: 'Cc', bcc: 'Bcc', subject: 'Subject', title: 'Title', start: 'Starts', end: 'Ends', location: 'Where', platform: 'On', channel: 'In', when: 'When' };
+
+function parseDraft(src) {
+  const lines = src.replace(/\r\n?/g, '\n').split('\n');
+  const head = {};
+  let k = 0;
+  while (k < lines.length) {
+    const m = lines[k].match(/^\s*([A-Za-z]+)\s*:\s*(.*)$/);
+    if (!m || !DRAFT_FIELDS.has(m[1].toLowerCase())) break;
+    const v = m[2].trim();
+    if (v && !/^\(optional\)$/i.test(v)) head[m[1].toLowerCase()] = v;
+    k++;
+  }
+  return { head, body: lines.slice(k).join('\n').trim() };
+}
+
+// "2026-11-25 14:00" → local Date (time optional).
+function parseWhen(s) {
+  const m = String(s || '').match(/(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T]+(\d{1,2}):(\d{2}))?/);
+  if (!m) return null;
+  return { date: new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)), allDay: !m[4] };
+}
+const pad = (n) => String(n).padStart(2, '0');
+const ymd = (d) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+const stamp = (d) => `${ymd(d)}T${pad(d.getHours())}${pad(d.getMinutes())}00`;
+const isoLocal = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+
+function draftLinks(kind, head, body) {
+  const q = (o) => Object.entries(o).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  if (kind === 'email-draft') {
+    return [
+      ['Open in Gmail', `https://mail.google.com/mail/?view=cm&fs=1&${q({ to: head.to, cc: head.cc, bcc: head.bcc, su: head.subject, body })}`],
+      ['Open in Outlook', `https://outlook.office.com/mail/deeplink/compose?${q({ to: head.to, cc: head.cc, subject: head.subject, body })}`],
+    ];
+  }
+  if (kind === 'post-draft' && body.length <= 280) return [['Post on X', `https://x.com/intent/post?${q({ text: body })}`]];
+  if (kind === 'event-draft') {
+    const start = parseWhen(head.start || head.when);
+    if (!start) return [];
+    let end = parseWhen(head.end);
+    if (!end || end.date <= start.date) end = { date: new Date(start.date.getTime() + (start.allDay ? 86400000 : 3600000)), allDay: start.allDay };
+    const dates = start.allDay ? `${ymd(start.date)}/${ymd(end.date)}` : `${stamp(start.date)}/${stamp(end.date)}`;
+    return [
+      ['Add to Google Calendar', `https://calendar.google.com/calendar/render?action=TEMPLATE&${q({ text: head.title, dates, location: head.location, details: body })}`],
+      ['Add to Outlook', `https://outlook.office.com/calendar/deeplink/compose?${q({ subject: head.title, startdt: isoLocal(start.date), enddt: isoLocal(end.date), location: head.location, body, allday: start.allDay ? 'true' : '' })}`],
+    ];
+  }
+  return [];
+}
+
+function draftCard(kind, src) {
+  const { head, body } = parseDraft(src);
+  const fields = Object.entries(head)
+    .filter(([k]) => !(kind === 'event-draft' && k === 'title'))
+    .map(([k, v]) => `<div><dt>${FIELD_NAMES[k] || esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('');
+  const title = kind === 'event-draft' && head.title ? `<div class="draft-title">${esc(head.title)}</div>` : '';
+  const copyText = kind === 'email-draft' && head.subject ? `Subject: ${head.subject}\n\n${body}` : body;
+  const links = draftLinks(kind, head, body)
+    .map(([label, href]) => `<a class="btn" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`).join('');
+  return `<div class="draft" data-kind="${kind}"><div class="draft-tag">${DRAFTS[kind]}</div>${title}${fields ? `<dl class="draft-fields">${fields}</dl>` : ''}${
+    body ? `<div class="draft-body">${esc(body)}</div>` : ''
+  }<textarea class="draft-text" hidden>${esc(copyText)}</textarea><div class="draft-actions"><button class="btn copy-draft" type="button">Copy</button>${links}</div></div>`;
+}
+
 export function renderMarkdown(md) {
   const lines = String(md || '').replace(/\r\n?/g, '\n').split('\n');
   let html = '';
@@ -97,6 +167,12 @@ export function renderMarkdown(md) {
       i++;
       while (i < lines.length && !lines[i].trim().startsWith(fence[1])) buf.push(lines[i++]);
       i++;
+      const kind = (fence[2] || '').toLowerCase();
+      if (DRAFTS[kind]) { html += draftCard(kind, buf.join('\n')); continue; }
+      if (kind === 'visual') {
+        html += `<div class="visual-host"><textarea class="visual-src" hidden>${esc(buf.join('\n'))}</textarea><div class="visual-loading">Drawing…</div></div>`;
+        continue;
+      }
       const lang = fence[2] ? ` data-lang="${esc(fence[2])}"` : '';
       html += `<pre${lang}><button class="copy-code" type="button" title="Copy">Copy</button><code>${esc(buf.join('\n'))}</code></pre>`;
       continue;

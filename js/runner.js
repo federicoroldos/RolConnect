@@ -53,6 +53,9 @@ async function main() {
       updateStep(i, patch) { Object.assign(am.steps[i], patch); },
       source(s) { if (s?.url && !seen.has(s.url)) { seen.add(s.url); am.sources.push({ title: s.title || s.url, url: s.url }); } },
       text(t) { am.text = t; },
+      log(entry) { (am.log ||= []).push(entry); if (am.log.length > 150) am.log.splice(0, am.log.length - 150); },
+      todos(list) { am.todos = list; },
+      image(img) { am.images = [...(am.images || []), `data:${img.mediaType};base64,${img.data}`].slice(-4); },
       async confirm(desc) {
         needsApproval = true;
         am.steps.push({ kind: 'approval', label: `Needs your approval: ${desc}`, status: 'error' });

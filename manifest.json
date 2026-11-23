@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Rold: AI New Tab & Browsing Agent",
   "short_name": "Rold",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Your new tab and side panel as an AI agent that searches the web, reads pages and uses your tabs. Claude, GPT and more through OpenCode or your ChatGPT plan.",
   "homepage_url": "https://github.com/federicoroldos/Rold",
   "minimum_chrome_version": "116",
@@ -25,10 +25,13 @@
     "notifications",
     "debugger",
     "activeTab",
-    "search"
+    "search",
+    "downloads"
   ],
-  "optional_permissions": ["history"],
-  "host_permissions": ["<all_urls>"],
+  "optional_permissions": ["history", "bookmarks", "sessions"],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
@@ -39,6 +42,14 @@
   "side_panel": {
     "default_path": "sidepanel.html"
   },
+  "sandbox": {
+    "pages": [
+      "visual.html"
+    ]
+  },
+  "content_security_policy": {
+    "sandbox": "sandbox allow-scripts allow-popups; default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:"
+  },
   "action": {
     "default_title": "Open Rold in the side panel",
     "default_icon": {
@@ -48,7 +59,9 @@
   },
   "commands": {
     "_execute_action": {
-      "suggested_key": { "default": "Ctrl+Shift+Y" },
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y"
+      },
       "description": "Open the Rold side panel"
     }
   }

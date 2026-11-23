@@ -24,6 +24,16 @@ An AI chat on every new tab that is also a browsing agent. It searches the web, 
 ### 🧭 An agent that uses your browser
 Ask for something and it does the steps: searches, reads pages, opens tabs, clicks buttons, fills in forms and presses keys. You see every step as it happens. The tabs it opens go into their own purple **Rold** tab group, so they never get mixed up with yours.
 
+It keeps going until the job is done (up to 100 steps): it plans longer tasks as a checklist you can follow, does several steps at once on a page, splits research between helpers working in parallel, and checks its own work before it answers. Long tasks don't run out of room: old page reads are cleared as it goes, and it remembers what it did in earlier turns of the chat.
+
+### 🗺️ Knows popular sites
+Built-in guides for Gmail, Outlook, Google Calendar, Docs, Drive and Maps, GitHub, Slack, Notion, Jira, Linear, Trello, Amazon, YouTube, LinkedIn, X, Reddit, WhatsApp Web and Discord tell it the fastest way to get things done there, like direct links that skip menus.
+
+### ✉️ Drafts, visuals and files
+- Emails, messages, posts and calendar events come back as cards you can copy, or open straight in Gmail, Outlook, X or Google Calendar.
+- It can draw charts, diagrams and small interactive widgets right in the answer. They run in a locked-down frame with no internet access.
+- Attach files and images to a message (📎, paste or drag and drop). It can also save what it makes as a file, or download one for you.
+
 ### 🖱️ Sees and uses any page
 With **Computer use** on (Settings → Agent), it takes screenshots of tabs and uses a real mouse and keyboard, so it works with anything on screen: canvas apps, maps, editors, drag and drop. It works in background tabs without switching away from what you're doing. While it does, Edge shows a *"started debugging this browser"* bar, which goes away when the task ends; clicking **Cancel** on it stops screen control. With models that can't see images, it falls back to reading the page.
 
@@ -42,13 +52,15 @@ Password and card fields are always off-limits.
 - **Steer:** type while it's working and the message reaches it right away, so you can correct it mid-task.
 - **Queue:** or have your messages wait and run as soon as it finishes.
 - **⏸ Pause** to take over the browser yourself, then **Resume**.
+- If it really needs a choice from you, it asks a quick question in the chat with buttons to answer.
+- If a site wants you to sign in or solve a CAPTCHA, it does everything else and tells you what's left for you.
 - Tasks keep running when you switch tabs or open another chat. If one needs your approval, the chat gets a badge and you get a notification.
 
 ### 🧠 Memory
-It remembers what matters about you (where you live, how you like answers, who's who) and uses it in every chat. You can see, edit and delete every memory, and choose how long task memories last. It can also look through your browsing history if you turn that on.
+It remembers what matters about you (where you live, how you like answers, who's who) and uses it in every chat. You can see, edit and delete every memory, and choose how long task memories last. It can also look through your browsing history, your bookmarks and recently closed tabs if you turn those on, and remember the pages it read so it can find them again later. **Tidy up** merges duplicate memories and drops stale ones (you confirm first).
 
 ### ⏰ Routines
-Tasks that run on their own: every few minutes, daily, on weekdays or weekly. They run in the background and send a notification with the result. A routine can start a new chat each time or keep adding to an existing one, and you can ask the agent to set one up for you. **Routines** in the sidebar lists them, with their recent runs, and lets you add, run, pause, edit or delete one.
+Tasks that run on their own: every few minutes, daily, on weekdays, weekly, or once at a set time (*"remind me in 20 minutes"*). They run in the background and send a notification with the result. A routine can start a new chat each time or keep adding to an existing one, and you can ask the agent to set one up for you. **Routines** in the sidebar lists them, with their recent runs, and lets you add, run, pause, edit or delete one.
 
 ### 🪟 Side panel
 The same chat next to whatever page you're on (**Ctrl+Shift+Y**). It knows which page you're looking at, so *"summarize this"* just works. You can also right-click any page or selection → **Ask Rold**.
@@ -98,13 +110,21 @@ Models load as soon as you paste a key or sign in. Under the chat box you can sw
 | `list_tabs`, `read_tab` | See your open tabs and read them, including pages you're logged into |
 | `browser_info` | Installed Rold and browser version, platform and current tab |
 | `open_tab`, `navigate_tab`, `scroll_page`, `close_tab` | Drive tabs |
-| `get_page_elements`, `click_element`, `type_text`, `press_key`, `wait` | Use pages: buttons, links, forms, menus |
-| `screenshot` | See a tab, including background tabs |
+| `get_page_elements`, `click_element`, `type_text`, `press_key`, `wait` | Use pages: buttons, links, forms, menus. After an action it shows only what changed |
+| `batch_actions` | Several clicks, typing and keys on a page in one step |
+| `run_js` | Run a short script on a page to read or change it when clicking is too slow (asks first in Guard) |
+| `screenshot` | See a tab, including background tabs, and show it to you as proof |
 | `click_at`, `type_keys`, `scroll_at`, `drag` | Real mouse and keyboard at screen coordinates (Computer use) |
-| `request_approval` | Ask you before doing something important |
+| `request_approval`, `ask_user` | Ask you before doing something important, or ask a quick question |
+| `update_todos` | Keep a checklist for longer tasks |
+| `delegate` | Hand research to helpers that work in parallel |
+| `read_skill` | Read a built-in guide for a site |
+| `save_file`, `download_url` | Save text it made as a file, or download a file |
 | `search_history` | Search your browsing history (only when turned on) |
-| `save_memory`, `forget_memory` | Remember or forget things about you |
-| `create_routine` | Set up a scheduled task (always asks first) |
+| `search_bookmarks`, `add_bookmark`, `recently_closed` | Bookmarks and recently closed tabs (only when turned on) |
+| `save_memory`, `forget_memory`, `search_memory` | Remember, forget or look up things about you |
+| `search_past_reads` | Find pages it read before (only when turned on) |
+| `create_routine`, `list_routines`, `update_routine` | Set up, see and change scheduled tasks (asks first) |
 
 </details>
 

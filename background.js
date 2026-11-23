@@ -78,6 +78,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (!r?.active) return;
   r.nextRun = nextRunTime(r.schedule, Date.now());
   await launch(r);
+  if (r.schedule?.type === 'once') r.active = false; // one-time check-ins run once
   await chrome.storage.local.set({ routines });
 });
 

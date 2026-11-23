@@ -1,9 +1,9 @@
 import {
   PROVIDERS, getSettings, saveSettings, isConfigured, hasCredentials, getChats, saveChat, deleteChat, clearChats,
-  getMemories, saveMemories, getRoutines, saveRoutine, deleteRoutine,
+  getMemories, saveMemories, getRoutines, saveRoutine, deleteRoutine, getReads, clearReads,
 } from './storage.js';
 import { renderMarkdown, esc } from './markdown.js';
-import { runAgent, listModels, modelAllowed, effortOptions, pickEffort, effortKey, chosenEffort, buildHistory } from './agent.js';
+import { runAgent, listModels, modelAllowed, effortOptions, pickEffort, effortKey, chosenEffort, buildHistory, userPrompt, complete } from './agent.js';
 import { currentPageInfo } from './tools.js';
 import { connectChatGPT } from './oauth.js';
 import { DAYS, normalizeSchedule, nextRunTime, describeSchedule } from './routines.js';
@@ -57,6 +57,14 @@ const ICONS = {
   alert: ic('<circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.01"/>'),
   display: ic('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
   spinner: ic('<path d="M12 3a9 9 0 1 0 9 9"/>', 'class="spin"'),
+  code: ic('<path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/>'),
+  todo: ic('<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/>'),
+  ask: ic('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M10 10a2 2 0 1 1 2.6 1.9c-.4.2-.6.5-.6.9v.7M12 16h.01"/>'),
+  delegate: ic('<circle cx="12" cy="6" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M12 8.5v3M12 11.5 6.5 16M12 11.5l5.5 4.5"/>'),
+  file: ic('<path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/>'),
+  attach: ic('<path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>'),
+  image: ic('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>'),
+  broom: ic('<path d="M14 4 9.5 12M6 12h9l1.5 8H4.5z"/><path d="M8.5 16v4M12 16v4"/>'),
 };
 ICONS.clock = ICONS.routine;
 
@@ -124,8 +132,11 @@ function shell() {
         <form class="composer" id="composer">
           <div class="ctx-row" id="ctxRow"></div>
           <div class="queue-row" id="queueRow"></div>
+          <div class="attach-row" id="attachRow"></div>
           <textarea id="input" rows="1" placeholder="${PLACEHOLDER}" autocomplete="off"></textarea>
           <div class="composer-bar">
+            <button type="button" class="icon-btn attach-btn" id="attachBtn" title="Attach files or images">${ICONS.attach}</button>
+            <input type="file" id="fileInput" multiple hidden>
             <div class="tool-wrap">
               <button type="button" class="tool-btn" id="modelPill" title="Model"></button>
               <div class="popover" id="modelMenu" hidden></div>
@@ -363,10 +374,14 @@ function stepSummary(steps) {
   const plural = (k, one, many) => (n(k) === 1 ? one : many.replace('#', n(k)));
   if (n('search')) parts.push(plural('search', 'Searched once', 'Searched # times'));
   if (n('read')) parts.push(plural('read', 'read 1 page', 'read # pages'));
-  const acts = n('tab') + n('click') + n('type') + n('wait') + n('screen');
+  const acts = n('tab') + n('click') + n('type') + n('wait') + n('screen') + n('code');
   if (acts) parts.push(`${acts} browser action${acts > 1 ? 's' : ''}`);
+  const helpers = steps.filter((s) => s.kind === 'delegate').length;
+  if (helpers) parts.push(helpers === 1 ? 'used helpers' : `used helpers ${helpers} times`);
+  if (n('ask')) parts.push(plural('ask', 'asked you once', 'asked you # times'));
+  if (n('file')) parts.push(plural('file', 'saved a file', 'saved # files'));
   if (n('memory')) parts.push('updated memory');
-  if (n('routine')) parts.push('scheduled a routine');
+  if (n('routine')) parts.push('managed routines');
   const text = parts.join(', ') || `${steps.length} step${steps.length > 1 ? 's' : ''}`;
   return text[0].toUpperCase() + text.slice(1);
 }
@@ -410,9 +425,41 @@ function notice(icon, title, text, buttons = '', cls = '') {
   return `<div class="notice ${cls}">${icon}<div class="notice-text"><strong>${title}</strong>${text ? `<span>${esc(text)}</span>` : ''}</div>${buttons ? `<div class="notice-btns">${buttons}</div>` : ''}</div>`;
 }
 
+const isImageSrc = (s) => typeof s === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(s);
+
+function fileChips(files, removable = false) {
+  return (files || [])
+    .map((f, i) => `<span class="file-chip" title="${esc(f.name)}">${f.image && isImageSrc(f.src) ? `<img src="${esc(f.src)}" alt="">` : ICONS.page}<span class="fc-name">${esc(f.name)}</span>${
+      removable ? `<button type="button" class="x-btn" data-unattach="${i}" title="Remove">${ICONS.x}</button>` : ''
+    }</span>`)
+    .join('');
+}
+
+function renderTodos(m) {
+  if (!m.todos?.length) return '';
+  const done = m.todos.filter((t) => t.status === 'done').length;
+  const mark = { done: ICONS.check, in_progress: ICONS.spinner, blocked: ICONS.x };
+  return `<div class="todos"><div class="todos-head">${ICONS.todo}<span>Checklist</span><span class="todos-count">${done}/${m.todos.length}</span></div>
+    <ul>${m.todos.map((t) => `<li class="todo t-${esc(t.status)}"><span class="todo-box">${mark[t.status] || ''}</span><span>${esc(t.text)}</span></li>`).join('')}</ul></div>`;
+}
+
+function renderShots(m) {
+  const list = (m.images || []).filter(isImageSrc);
+  if (!list.length) return '';
+  return `<div class="shots">${list.map((src, i) => `<button type="button" class="shot" data-shot="${i}" title="Open full size"><img src="${esc(src)}" alt="Screenshot"></button>`).join('')}</div>`;
+}
+
+function askCard(q) {
+  const opts = (q.options || []).map((o, i) => `<button type="button" class="btn ${i === 0 ? 'primary' : ''} small" data-ask-opt="${i}">${esc(o)}</button>`).join('');
+  return `<div class="ask-card">${ICONS.ask}<div class="ask-body"><strong>${esc(q.question)}</strong>${opts ? `<div class="ask-opts">${opts}</div>` : ''}${
+    q.allowText !== false ? `<div class="ask-input"><input class="ask-text" placeholder="Type an answer" value="${esc(q.draft || '')}" autocomplete="off"><button type="button" class="btn small" data-ask-send>Send</button></div>` : ''
+  }<button type="button" class="btn link small ask-skip" data-ask-skip>Skip, use your judgment</button></div></div>`;
+}
+
 function messageHTML(m, idx) {
   if (m.role === 'user') {
-    return `<div class="msg user prompt" data-idx="${idx}">${esc(m.text)}</div>`;
+    const files = fileChips(m.files);
+    return `<div class="msg user prompt" data-idx="${idx}">${files ? `<div class="msg-files">${files}</div>` : ''}${esc(m.text)}</div>`;
   }
   const paused = m.status === 'running' && run?.idx === idx && run.paused;
   const body = m.error
@@ -423,14 +470,17 @@ function messageHTML(m, idx) {
         ? `<div class="working">${ICONS.spinner}<span>Working</span></div>`
         : '';
   const confirming = run?.idx === idx && run.confirm;
+  const asking = run?.idx === idx && run.ask;
   return `<div class="msg assistant ${m.status === 'running' ? 'running' : ''}" data-idx="${idx}">
     <div class="msg-main">
       ${renderSteps(m)}
+      ${renderTodos(m)}
       ${paused ? notice(ICONS.pause, 'Paused', run.pauseReason, `<button type="button" class="btn primary small act" data-act="resume">${ICONS.play}Resume</button>`) : ''}
       ${renderSources(m)}
       ${body}
+      ${renderShots(m)}
       <div class="confirm-slot">${confirming ? notice(ICONS.shield, 'Approve this action?', run.confirm.text,
-        '<button type="button" class="btn" data-v="0">Deny</button><button type="button" class="btn primary" data-v="1">Approve</button>', 'confirm-card') : ''}</div>
+        '<button type="button" class="btn" data-v="0">Deny</button><button type="button" class="btn primary" data-v="1">Approve</button>', 'confirm-card') : ''}${asking ? askCard(run.ask) : ''}</div>
       ${m.status !== 'running' ? `<div class="msg-actions">
         ${m.text ? `<button class="act" data-act="copy" title="Copy">${ICONS.copy}</button>` : ''}
         <button class="act" data-act="retry" title="Regenerate">${ICONS.retry}</button>
@@ -492,6 +542,7 @@ function renderThread() {
   // Chat/Search only applies to a new chat; a started one always sends to the agent.
   if (msgs.length && inputMode === 'search') setInputMode('chat');
   $('#thread').innerHTML = msgs.map(messageHTML).join('');
+  mountVisuals($('#thread'));
   renderTopTitle();
   scrollToBottom(true);
 }
@@ -502,9 +553,50 @@ function rerenderMessage(idx) {
   const m = chat.messages[idx];
   const tmp = document.createElement('div');
   tmp.innerHTML = messageHTML(m, idx);
-  el.replaceWith(tmp.firstElementChild);
+  const fresh = tmp.firstElementChild;
+  const focused = document.activeElement?.matches?.('.ask-text') && el.contains(document.activeElement);
+  el.replaceWith(fresh);
+  mountVisuals(fresh);
+  if (focused) $('.ask-text', fresh)?.focus();
   scrollToBottom();
 }
+
+// ```visual blocks render in a sandboxed page (visual.html) that has no extension access.
+function visualTheme() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (n) => cs.getPropertyValue(n).trim();
+  const t = document.documentElement.dataset.theme;
+  return {
+    theme: { '--text': v('--text'), '--muted': v('--text-2'), '--accent': v('--accent'), '--accent-soft': v('--accent-soft'), '--line': v('--line'), '--bg': v('--raised') || v('--bg') },
+    dark: t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches,
+    font: getComputedStyle(document.body).fontFamily,
+  };
+}
+
+function mountVisuals(root) {
+  $$('.visual-host:not([data-ready])', root).forEach((host) => {
+    host.dataset.ready = '1';
+    const src = $('.visual-src', host)?.value || '';
+    const f = document.createElement('iframe');
+    f.className = 'visual-frame';
+    f.setAttribute('sandbox', 'allow-scripts allow-popups');
+    f.title = 'Visual';
+    f.addEventListener('load', () => {
+      const t = visualTheme();
+      f.style.colorScheme = t.dark ? 'dark' : 'light'; // must match the frame's own scheme, or it paints an opaque background
+      f.contentWindow?.postMessage({ type: 'rold-visual', html: src, ...t }, '*');
+    });
+    f.src = chrome.runtime.getURL('visual.html');
+    $('.visual-loading', host)?.remove();
+    host.append(f);
+  });
+}
+
+window.addEventListener('message', (e) => {
+  if (e.data?.type !== 'rold-visual-size') return;
+  const f = $$('.visual-frame').find((x) => x.contentWindow === e.source);
+  if (f) f.style.height = `${Math.min(Math.max(Number(e.data.h) || 0, 24), 1400)}px`;
+});
 
 // ---------------------------------------------------------------------------
 // Model pill + menu
@@ -666,12 +758,38 @@ function confirmAction(r, text) {
 let myTabId = null;
 chrome.tabs.getCurrent?.().then((t) => { myTabId = t?.id ?? null; }).catch(() => {});
 
-function notifyApproval(r, text) {
+// Questions from the agent (ask_user) wait here the same way approvals do.
+function askUser(r, q) {
+  return new Promise((resolve) => {
+    const m = r.chat.messages[r.idx];
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      r.ask = null;
+      m.waiting = false;
+      r.paint();
+      renderChatList();
+      if (r === run) updateSendBtn();
+      resolve(v);
+    };
+    r.ask = { ...q, draft: '', done };
+    m.waiting = true;
+    r.paint();
+    renderChatList();
+    if (r === run) updateSendBtn();
+    if (chat === r.chat) scrollToBottom(true);
+    notifyApproval(r, q.question, 'Question');
+    r.controller.signal.addEventListener('abort', () => done(null), { once: true });
+  });
+}
+
+function notifyApproval(r, text, kind = 'Approve') {
   if (!document.hidden && chat === r.chat) return;
   chrome.notifications?.create(`rold-approve:${r.chat.id}:${Date.now()}`, {
     type: 'basic',
     iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-    title: `Approve: ${r.chat.title || 'Rold'}`,
+    title: `${kind}: ${r.chat.title || 'Rold'}`,
     message: text,
     priority: 2,
   }, () => void chrome.runtime.lastError);
@@ -697,14 +815,14 @@ function looksLikeUrl(s) {
 // While a task runs, the send button stops it (empty box) or steers / queues a follow-up (text typed).
 function updateSendBtn() {
   const running = !!controller;
-  const hasText = !!$('#input').value.trim();
+  const hasText = !!$('#input').value.trim() || (!running && attachments.length > 0);
   const searching = inputMode === 'search';
   const stop = running && !hasText;
   const queueMode = settings.followUp === 'queue';
   $('#sendBtn').innerHTML = stop ? ICONS.stop : searching ? ICONS.search : ICONS.send;
   $('#sendBtn').classList.toggle('stop', stop);
   $('#sendBtn').title = stop ? 'Stop' : searching ? 'Search (Enter)' : running ? (queueMode ? 'Queue' : 'Steer') : 'Send (Enter)';
-  $('#input').placeholder = searching ? SEARCH_PLACEHOLDER : running ? (queueMode ? 'Queue a follow-up' : 'Steer the agent') : PLACEHOLDER;
+  $('#input').placeholder = searching ? SEARCH_PLACEHOLDER : run?.ask ? 'Type your answer' : running ? (queueMode ? 'Queue a follow-up' : 'Steer the agent') : PLACEHOLDER;
   $('#pauseBtn').hidden = !running;
   $('#pauseBtn').innerHTML = run?.paused ? ICONS.play : ICONS.pause;
   $('#pauseBtn').title = run?.paused ? 'Resume' : 'Pause and take over';
@@ -732,6 +850,7 @@ function resumeRun() {
 function followUp(text) {
   $('#input').value = '';
   autosize();
+  if (run?.ask) { run.ask.done(text); updateSendBtn(); return; } // a typed reply answers the open question
   if (settings.followUp === 'queue' || !run) {
     queue.push(text);
     renderQueue();
@@ -770,13 +889,16 @@ async function webSearch(text) {
 }
 
 // target: the chat to run in (defaults to the one on screen). Runs keep going when you switch away.
-async function send(text, { regenerate = false, target = null } = {}) {
+async function send(text, { regenerate = false, target = null, files = null } = {}) {
   text = text.trim();
+  const own = !regenerate && !target; // typed in the composer: takes the pending attachments
+  if (!files && own) files = attachments.length ? attachments.slice() : null;
+  if (!text && files?.length) text = files.length === 1 ? 'Take a look at the attached file.' : 'Take a look at the attached files.';
   if (!text) return;
   let thisChat = target || chat;
   if (thisChat && runs.has(thisChat.id)) return;
 
-  if (MODE === 'newtab' && !regenerate && !target && looksLikeUrl(text)) {
+  if (MODE === 'newtab' && own && !files?.length && looksLikeUrl(text)) {
     const url = /^https?:\/\//i.test(text) ? text : `https://${text}`;
     // Leaving this page would stop the tasks running in it, so open the site in a new tab instead.
     if (runs.size) { chrome.tabs.create({ url }); $('#input').value = ''; autosize(); updateSendBtn(); }
@@ -804,7 +926,12 @@ async function send(text, { regenerate = false, target = null } = {}) {
   const msgs = thisChat.messages;
   const history = buildHistory(msgs);
 
-  if (!regenerate) msgs.push({ role: 'user', text, ts: Date.now() });
+  if (!regenerate) msgs.push({ role: 'user', text, ts: Date.now(), ...(files?.length ? { files } : {}) });
+  if (own && files?.length) { attachments = []; renderAttachments(); }
+  const userMsg = msgs[msgs.length - 1];
+  const images = (userMsg.files || [])
+    .filter((f) => f.image && isImageSrc(f.src))
+    .map((f) => ({ mediaType: f.src.slice(5, f.src.indexOf(';')), data: f.src.slice(f.src.indexOf(',') + 1) }));
   const am = {
     role: 'assistant', text: '', steps: [], sources: [], status: 'running',
     provider: settings.provider, model: settings.providers[settings.provider].model, ts: Date.now(),
@@ -864,6 +991,20 @@ async function send(text, { regenerate = false, target = null } = {}) {
       paint();
     },
     confirm: (desc) => confirmAction(thisRun, desc),
+    ask: (q) => askUser(thisRun, q),
+    // What the agent did this turn, replayed in later turns so it remembers its work.
+    log(entry) {
+      (am.log ||= []).push(entry);
+      if (am.log.length > 150) am.log.splice(0, am.log.length - 150);
+    },
+    todos(list) {
+      am.todos = list;
+      paint();
+    },
+    image(img) {
+      am.images = [...(am.images || []), `data:${img.mediaType};base64,${img.data}`].slice(-4);
+      paint();
+    },
   };
 
   if (MODE === 'side') await refreshPageInfo();
@@ -872,7 +1013,8 @@ async function send(text, { regenerate = false, target = null } = {}) {
     const out = await runAgent({
       settings,
       history,
-      userText: text,
+      userText: userPrompt(userMsg),
+      images,
       ui,
       signal,
       mode: MODE,
@@ -917,7 +1059,58 @@ function regenerate() {
   const msgs = chat.messages;
   if (msgs[msgs.length - 1]?.role === 'assistant') msgs.pop();
   const lastUser = msgs[msgs.length - 1];
-  if (lastUser?.role === 'user') send(lastUser.text, { regenerate: true });
+  if (lastUser?.role === 'user') send(lastUser.text, { regenerate: true, files: lastUser.files || null });
+}
+
+// ---------------------------------------------------------------------------
+// Attachments: text files are inlined into the message, images are shrunk and sent to the model.
+
+let attachments = []; // [{ name, text } | { name, image: true, src }]
+const MAX_ATTACH = 6;
+const MAX_FILE_TEXT = 150000;
+const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|xml|html?|css|js|mjs|ts|tsx|jsx|py|rb|go|rs|java|kt|c|h|cpp|hpp|cs|php|sh|ps1|bat|sql|ya?ml|toml|ini|cfg|conf|log|srt|vtt|ics|svg|tex|rst)$/i;
+
+function renderAttachments() {
+  const row = $('#attachRow');
+  if (!row) return;
+  row.innerHTML = fileChips(attachments, true);
+  updateSendBtn();
+}
+
+async function shrinkImage(file) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, 1568 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(bmp.width * scale));
+  c.height = Math.max(1, Math.round(bmp.height * scale));
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, c.width, c.height);
+  g.drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close?.();
+  return c.toDataURL('image/jpeg', 0.85);
+}
+
+async function addFiles(list) {
+  for (const file of [...list]) {
+    if (attachments.length >= MAX_ATTACH) { toast(`Up to ${MAX_ATTACH} attachments per message.`); break; }
+    const name = file.name || (file.type.startsWith('image/') ? 'Pasted image' : 'Pasted file');
+    try {
+      if (file.type.startsWith('image/')) {
+        attachments.push({ name, image: true, src: await shrinkImage(file) });
+      } else if (file.type.startsWith('text/') || /json|xml|javascript|csv|yaml|calendar/.test(file.type) || TEXT_EXT.test(name)) {
+        if (file.size > 5_000_000) { toast(`${name} is too big to attach.`); continue; }
+        let text = await file.text();
+        if (text.length > MAX_FILE_TEXT) text = text.slice(0, MAX_FILE_TEXT) + `\n[truncated, ${text.length.toLocaleString()} characters in total]`;
+        attachments.push({ name, text });
+      } else {
+        toast(`${name}: only text files and images can be attached for now.`);
+      }
+    } catch (err) {
+      toast(`Could not attach ${name}: ${err.message}`);
+    }
+  }
+  renderAttachments();
 }
 
 // ---------------------------------------------------------------------------
@@ -981,6 +1174,10 @@ function openSettings(tab = settings.provider) {
         <input type="checkbox" class="switch" data-g="computerUse" ${settings.computerUse ? 'checked' : ''}></label>
       <label class="field row"><span>Use the provider's built-in web search</span>
         <input type="checkbox" class="switch" data-g="nativeSearch" ${settings.nativeSearch ? 'checked' : ''}></label>
+      <label class="field row"><span>Bookmarks<small>Search and add bookmarks</small></span>
+        <input type="checkbox" class="switch" data-x="bookmarks" ${settings.extras?.bookmarks && chrome.bookmarks ? 'checked' : ''}></label>
+      <label class="field row"><span>Recently closed tabs<small>Find and reopen closed tabs</small></span>
+        <input type="checkbox" class="switch" data-x="sessions" ${settings.extras?.sessions && chrome.sessions ? 'checked' : ''}></label>
       </section>
 
       <h3>${ICONS.memory}Memory</h3>
@@ -992,9 +1189,13 @@ function openSettings(tab = settings.provider) {
       <label class="field row"><span>Keep task memories</span>
         <select data-m="retention">${[['never', 'Never forget'], ['30d', '30 days'], ['90d', '90 days']]
           .map(([v, l]) => `<option value="${v}" ${settings.memory.retention === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <div class="field row"><span>Remember pages it reads<small id="readsCount">So it can find them again in later chats</small></span>
+        <span class="row-ctl"><button type="button" class="btn small" data-clearreads>Clear</button>
+        <input type="checkbox" class="switch" data-m="reads" ${settings.memory.reads !== false ? 'checked' : ''}></span></div>
       <div class="mem-list" id="memList"></div>
       <div class="key-row mem-add"><input id="memNew" placeholder="Add a memory" autocomplete="off">
-        <button type="button" class="btn small" data-memadd>Add</button></div>
+        <button type="button" class="btn small" data-memadd>Add</button>
+        <button type="button" class="btn small" data-memtidy title="Merge duplicates and drop outdated memories">${ICONS.broom}<span>Tidy up</span></button></div>
       </section>
 
       <h3>${ICONS.display}Appearance and data</h3>
@@ -1009,6 +1210,10 @@ function openSettings(tab = settings.provider) {
   m.hidden = false;
   showPane(tab);
   renderMemories();
+  getReads().then((list) => {
+    const el = $('#readsCount');
+    if (el && list.length) el.textContent = `${list.length} page${list.length === 1 ? '' : 's'} remembered`;
+  }).catch(() => {});
   // Fill in model lists for connected accounts that have no list yet.
   for (const k of Object.keys(PROVIDERS)) {
     const c = settings.providers[k];
@@ -1135,6 +1340,59 @@ async function updateMemories(fn) {
   renderMemories();
 }
 
+const TIDY_SYSTEM = `You clean up the saved memories of a personal browsing assistant. You get them as a JSON array of {id, kind, text}.
+Return only a JSON array of the memories to keep, as {id, kind, text}:
+- Merge duplicates and near duplicates into one memory (keep the id of one of them).
+- When two memories conflict, keep the newer-sounding or more specific one.
+- Drop memories that are clearly outdated, trivial or empty. Keep anything that could still matter.
+- Keep each text short, factual and in the same language it was written in. Do not invent anything.
+- kind stays "core" for lasting facts about the user and "episodic" for notes about past tasks.
+Reply with the JSON array only, no other text.`;
+
+async function tidyMemories(btn) {
+  const list = await getMemories(settings);
+  if (list.length < 3) return toast('Nothing to tidy yet.');
+  if (!isConfigured(settings)) return toast('Connect a model first.');
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.textContent = 'Tidying…';
+  try {
+    const out = await complete({
+      settings,
+      system: TIDY_SYSTEM,
+      prompt: JSON.stringify(list.map((m) => ({ id: m.id, kind: m.kind, text: m.text }))),
+    });
+    let parsed = null;
+    try { parsed = JSON.parse(String(out).match(/\[[\s\S]*\]/)?.[0] || ''); } catch {}
+    if (!Array.isArray(parsed)) throw new Error('the model did not return a list.');
+    const byId = Object.fromEntries(list.map((m) => [m.id, m]));
+    const now = Date.now();
+    const used = new Set();
+    const next = parsed
+      .filter((x) => x && typeof x.text === 'string' && x.text.trim())
+      .slice(0, 400)
+      .map((x) => {
+        const old = byId[x.id] && !used.has(x.id) ? byId[x.id] : null;
+        if (old) used.add(old.id);
+        const text = x.text.trim().slice(0, 600);
+        return {
+          ...(old || {}), id: old ? old.id : 'm' + uid(), kind: x.kind === 'episodic' ? 'episodic' : 'core', text,
+          created: old?.created || now, updated: old && old.text === text ? old.updated || now : now,
+        };
+      });
+    if (!next.length) throw new Error('the model returned an empty list.');
+    if (!confirm(`Tidy up memories: ${list.length} now, ${next.length} after merging duplicates and dropping outdated ones. Apply?`)) return;
+    await saveMemories(next);
+    renderMemories();
+    toast(`Memories tidied: ${list.length} → ${next.length}.`);
+  } catch (err) {
+    toast('Could not tidy memories: ' + (err.message || err));
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = label;
+  }
+}
+
 // ---- Routines ----
 
 const fmtWhen = (ts) => new Date(ts).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -1166,17 +1424,25 @@ async function renderRoutines() {
     .join('');
 }
 
+const localInput = (ts) => {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
 function routineForm(r) {
   const s = normalizeSchedule(r?.schedule || { type: 'daily', time: '09:00' });
   const opt = (v, l, cur) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${l}</option>`;
+  const at = localInput(s.type === 'once' && s.at ? s.at : Date.now() + 3600000);
   return `<div class="routine-form" data-rform="${esc(r?.id || '')}">
     <label class="field"><span>Name</span><input data-r="name" value="${esc(r?.name || '')}" autocomplete="off"></label>
     <label class="field"><span>Instructions</span><textarea data-r="instructions" rows="3">${esc(r?.instructions || '')}</textarea></label>
     <div class="field"><span>Schedule</span>
       <div class="key-row r-sched-row">
-        <select data-r="type">${opt('interval', 'Every', s.type)}${opt('daily', 'Daily', s.type)}${opt('weekdays', 'Weekdays', s.type)}${opt('weekly', 'Weekly', s.type)}</select>
+        <select data-r="type">${opt('interval', 'Every', s.type)}${opt('daily', 'Daily', s.type)}${opt('weekdays', 'Weekdays', s.type)}${opt('weekly', 'Weekly', s.type)}${opt('once', 'Once', s.type)}</select>
         <select data-r="day" ${s.type === 'weekly' ? '' : 'hidden'}>${DAYS.map((d, i) => opt(i, d, s.day ?? 1)).join('')}</select>
-        <input data-r="time" type="time" value="${s.time || '09:00'}" ${s.type === 'interval' ? 'hidden' : ''}>
+        <input data-r="time" type="time" value="${s.time || '09:00'}" ${s.type === 'interval' || s.type === 'once' ? 'hidden' : ''}>
+        <input data-r="at" type="datetime-local" value="${at}" ${s.type === 'once' ? '' : 'hidden'}>
         <select data-r="minutes" ${s.type === 'interval' ? '' : 'hidden'}>${[[15, '15 minutes'], [30, '30 minutes'], [60, 'hour'], [120, '2 hours'], [180, '3 hours'], [360, '6 hours'], [720, '12 hours']]
           .map(([v, l]) => opt(v, l, s.minutes || 60)).join('')}</select>
       </div>
@@ -1195,10 +1461,11 @@ async function saveRoutineForm(form) {
     s.textContent = 'Add a name and instructions.';
     return;
   }
-  const schedule = normalizeSchedule({ type: v('type'), time: v('time'), day: v('day'), minutes: v('minutes') });
+  const atTs = new Date(v('at')).getTime();
+  const schedule = normalizeSchedule({ type: v('type'), time: v('time'), day: v('day'), minutes: v('minutes'), at: Number.isFinite(atTs) ? atTs : undefined });
   const existing = form.dataset.rform ? (await getRoutines())[form.dataset.rform] : null;
   const r = existing
-    ? { ...existing, name, instructions, schedule, nextRun: existing.active ? nextRunTime(schedule) : existing.nextRun }
+    ? { ...existing, name, instructions, schedule, ...(schedule.type === 'once' ? { active: true } : {}), nextRun: existing.active || schedule.type === 'once' ? nextRunTime(schedule) : existing.nextRun }
     : { id: 'r' + uid(), name, instructions, kind: 'cron', schedule, active: true, created: Date.now(), nextRun: nextRunTime(schedule), runs: [] };
   await saveRoutine(r);
   $('#routineForm').innerHTML = '';
@@ -1229,6 +1496,15 @@ function bindSettings() {
     }
     const memDel = e.target.closest('[data-memdel]');
     if (memDel) return updateMemories((l) => l.filter((x) => x.id !== memDel.dataset.memdel));
+    const tidy = e.target.closest('[data-memtidy]');
+    if (tidy) return tidyMemories(tidy);
+    if (e.target.closest('[data-clearreads]')) {
+      if (!confirm('Forget the pages Rold has read? This cannot be undone.')) return;
+      await clearReads();
+      const el = $('#readsCount');
+      if (el) el.textContent = 'So it can find them again in later chats';
+      return toast('Past reads cleared.');
+    }
 
     // Routines
     if (e.target.closest('[data-rnew]')) {
@@ -1319,8 +1595,23 @@ function bindSettings() {
       const form = e.target.closest('.routine-form');
       const type = e.target.value;
       $('[data-r="day"]', form).hidden = type !== 'weekly';
-      $('[data-r="time"]', form).hidden = type === 'interval';
+      $('[data-r="time"]', form).hidden = type === 'interval' || type === 'once';
       $('[data-r="minutes"]', form).hidden = type !== 'interval';
+      $('[data-r="at"]', form).hidden = type !== 'once';
+      return;
+    }
+    const xk = e.target.dataset.x;
+    if (xk) {
+      // Bookmarks and recently closed tabs are optional permissions, asked for on this click.
+      const on = e.target.checked;
+      const perm = { permissions: [xk] };
+      (on ? chrome.permissions.request(perm) : chrome.permissions.remove(perm).then(() => false))
+        .then((granted) => {
+          settings.extras = { ...settings.extras, [xk]: !!granted };
+          e.target.checked = !!granted;
+          saveSettings(settings);
+          if (on && !granted) toast('Edge did not grant that permission.');
+        }, (err) => { e.target.checked = false; toast(err.message); });
       return;
     }
     if (mk) {
@@ -1405,9 +1696,72 @@ function bind() {
     if (runs.size) { e.preventDefault(); e.returnValue = ''; }
   });
 
+  // Attachments: paperclip, paste and drop.
+  $('#attachBtn').addEventListener('click', () => $('#fileInput').click());
+  $('#fileInput').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; input.focus(); });
+  input.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length) return;
+    e.preventDefault();
+    addFiles(files);
+  });
+  const composer = $('#composer');
+  composer.addEventListener('dragover', (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+    e.preventDefault();
+    composer.classList.add('dropping');
+  });
+  composer.addEventListener('dragleave', (e) => { if (!composer.contains(e.relatedTarget)) composer.classList.remove('dropping'); });
+  composer.addEventListener('drop', (e) => {
+    composer.classList.remove('dropping');
+    if (!e.dataTransfer?.files?.length) return;
+    e.preventDefault();
+    addFiles(e.dataTransfer.files);
+  });
+  $('#attachRow').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-unattach]');
+    if (!b) return;
+    attachments.splice(+b.dataset.unattach, 1);
+    renderAttachments();
+  });
+
+  // Answers to the agent's questions.
+  $('#thread').addEventListener('input', (e) => {
+    if (e.target.matches('.ask-text') && run?.ask) run.ask.draft = e.target.value;
+  });
+  $('#thread').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing || !e.target.matches('.ask-text')) return;
+    e.preventDefault();
+    const v = e.target.value.trim();
+    if (v && run?.ask) run.ask.done(v);
+  });
+
   $('#thread').addEventListener('click', (e) => {
     const cv = e.target.closest('.confirm-card [data-v]');
     if (cv) { run?.confirm?.done(cv.dataset.v === '1'); return; }
+    if (run?.ask) {
+      const opt = e.target.closest('[data-ask-opt]');
+      if (opt) return run.ask.done(run.ask.options[+opt.dataset.askOpt]);
+      if (e.target.closest('[data-ask-send]')) {
+        const v = $('.ask-card .ask-text')?.value.trim();
+        if (v) run.ask.done(v);
+        return;
+      }
+      if (e.target.closest('[data-ask-skip]')) return run.ask.done(null);
+    }
+    const copyDraft = e.target.closest('.copy-draft');
+    if (copyDraft) {
+      navigator.clipboard.writeText($('.draft-text', copyDraft.closest('.draft')).value);
+      copyDraft.textContent = 'Copied';
+      setTimeout(() => (copyDraft.textContent = 'Copy'), 1200);
+      return;
+    }
+    const shot = e.target.closest('.shot');
+    if (shot) {
+      // Data URLs can't open as a page, so the screenshot opens as a blob.
+      fetch($('img', shot).src).then((r) => r.blob()).then((b) => window.open(URL.createObjectURL(b), '_blank')).catch(() => {});
+      return;
+    }
     const copyCode = e.target.closest('.copy-code');
     if (copyCode) {
       navigator.clipboard.writeText($('code', copyCode.parentElement).textContent);
