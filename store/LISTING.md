@@ -4,7 +4,7 @@ Copy and paste these into [Partner Center](https://partner.microsoft.com/dashboa
 
 ## Package
 
-Upload `dist/RoldHarness-<version>.zip`. To build it, run:
+Upload `dist/Rold-<version>.zip`. To build it, run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File store\build.ps1
@@ -18,15 +18,15 @@ powershell -ExecutionPolicy Bypass -File store\build.ps1
 ## Properties
 
 - **Category:** Productivity
-- **Website:** https://github.com/federicoroldos/RoldHarness
-- **Support contact:** https://github.com/federicoroldos/RoldHarness/issues
+- **Website:** https://github.com/federicoroldos/Rold
+- **Support contact:** https://github.com/federicoroldos/Rold/issues
 - **Mature content:** unchecked
 
 ## Privacy
 
 ### Single purpose description
 
-Rold Harness replaces the new tab page and adds a side panel with an AI assistant that can browse for the user: it searches the web, reads pages and carries out tasks in the user's tabs, using an OpenCode Zen or OpenCode Go API key the user provides, or the user's own ChatGPT sign-in.
+Rold replaces the new tab page and adds a side panel with an AI assistant that can browse for the user: it searches the web, reads pages and carries out tasks in the user's tabs, using an OpenCode Zen or OpenCode Go API key the user provides, or the user's own ChatGPT sign-in.
 
 ### Permission justifications
 
@@ -35,12 +35,12 @@ Rold Harness replaces the new tab page and adds a side panel with an AI assistan
 | `storage` | Saves the user's settings, API keys, chats, memories and routines locally in the browser profile. |
 | `unlimitedStorage` | Chat history and memories can exceed the default 10 MB local storage quota over time. |
 | `tabs` | Lists the open tabs and reads their titles and URLs, so the assistant can tell which page the user means. Also opens, switches and closes the tabs the agent works in, and opens OpenAI's sign-in page when the user signs in with ChatGPT, reading the sign-in result from that tab's address. |
-| `activeTab` | Captures the visible area of a browser-internal page (for example `edge://extensions`) after the user invokes Rold Harness on that tab, because Edge blocks direct access to those pages. |
+| `activeTab` | Captures the visible area of a browser-internal page (for example `edge://extensions`) after the user invokes Rold on that tab, because Edge blocks direct access to those pages. |
 | `scripting` | Reads the text of a page, and clicks or types on it, when the user asks the assistant to read that page or act on it. |
 | `sidePanel` | Shows the assistant in the side panel, next to the page the user is viewing. |
-| `contextMenus` | Adds "Ask Rold Harness" to the right-click menu for pages and selected text. |
+| `contextMenus` | Adds "Ask Rold" to the right-click menu for pages and selected text. |
 | `favicon` | Shows site icons next to the sources the assistant cites. |
-| `tabGroups` | Keeps the tabs the agent opens in their own labeled "Rold Harness" tab group, so they don't mix with the user's tabs. |
+| `tabGroups` | Keeps the tabs the agent opens in their own labeled "Rold" tab group, so they don't mix with the user's tabs. |
 | `search` | When the user switches the message box to Search, sends what they typed to the browser's default search engine, instead of to the assistant. |
 | `alarms` | Runs the scheduled routines the user creates (for example, a daily news summary). |
 | `notifications` | Tells the user when a routine finishes, or when a running task needs their approval. |
@@ -66,14 +66,14 @@ Certify all three statements: the data isn't sold to third parties, it isn't use
 
 ### Privacy policy URL
 
-https://github.com/federicoroldos/RoldHarness/blob/main/PRIVACY.md
+https://github.com/federicoroldos/Rold/blob/main/PRIVACY.md
 
 ## Store listing (English)
 
 ### Description
 
 ```
-Rold Harness turns every new tab, and the side panel, into an AI assistant that can also use your browser for you.
+Rold turns every new tab, and the side panel, into an AI assistant that can also use your browser for you.
 
 Ask a question and it searches the web, reads the best sources and answers with links. Ask for a task and it does the steps itself: it opens tabs, clicks, fills in forms and presses keys, and you watch every step as it happens.
 
@@ -84,11 +84,11 @@ Ask a question and it searches the web, reads the best sources and answers with 
 • Tasks keep running when you switch tabs or chats, and you get a notification when one needs your approval.
 • Memory: it remembers what matters about you, and you can see, edit and delete every memory.
 • Routines: scheduled tasks, like a morning news summary or a price check, that run in the background and notify you. Manage them from Routines in the sidebar.
-• Side panel (Ctrl+Shift+Y) next to any page, so "summarize this" just works. Or right-click → Ask Rold Harness.
+• Side panel (Ctrl+Shift+Y) next to any page, so "summarize this" just works. Or right-click → Ask Rold.
 
 Private by design: your keys, chats and memories stay in your browser. Requests go directly to OpenCode or OpenAI, and there are no analytics or tracking.
 
-Open source (MIT): https://github.com/federicoroldos/RoldHarness
+Open source (MIT): https://github.com/federicoroldos/Rold
 ```
 
 ### Images
@@ -98,7 +98,7 @@ Open source (MIT): https://github.com/federicoroldos/RoldHarness
 | Extension logo (300 × 300) | `store/images/logo-300.png` |
 | Small promotional tile (440 × 280) | `store/images/tile-small-440x280.png` |
 | Large promotional tile (1400 × 560) | `store/images/tile-large-1400x560.png` |
-| Screenshots (1280 × 800) | `store/images/screenshot-1-agent.png` … `screenshot-4-settings.png` |
+| Screenshots (1280 × 800) | `store/images/screenshot-1-agent.png` … `screenshot-5-routines.png` |
 
 ### Search terms
 
@@ -111,12 +111,12 @@ AI agent; new tab; side panel; Claude; ChatGPT; browser automation; AI assistant
 ## Notes for certification
 
 ```
-Rold Harness needs an OpenCode API key to answer. For this test, use an OpenCode Zen key (small prepaid balance): <PASTE KEY HERE>
+Rold needs an OpenCode API key to answer. For this test, use an OpenCode Zen key (small prepaid balance): <PASTE KEY HERE>
 
 How to test:
 1. Open a new tab. Choose "Keep changes" if Edge asks about the new tab page. Settings opens.
 2. Under Accounts → OpenCode Zen, paste the key above, pick any Claude or GPT model from the list (only paid models are listed), and click "Use OpenCode Zen".
-3. Ask: "What's on the front page of Hacker News?" The agent searches, opens a tab in the "Rold Harness" group, reads it and answers.
+3. Ask: "What's on the front page of Hacker News?" The agent searches, opens a tab in the "Rold" group, reads it and answers.
 4. Computer use: ask "Open https://excalidraw.com and draw a rectangle." Edge shows its debugging bar while the agent works. The bar goes away when the task ends.
 5. Side panel: press Ctrl+Shift+Y on any page and ask "Summarize this page".
 

@@ -95,7 +95,7 @@ function shell() {
   <div class="app ${MODE}">
     <aside class="sidebar" id="sidebar">
       <div class="sb-head">
-        <span class="brand">Rold Harness</span>
+        <span class="brand">Rold</span>
         <button class="icon-btn" id="collapseSidebar" title="Hide sidebar">${ICONS.sidebar}</button>
       </div>
       <nav class="sb-nav">
@@ -444,7 +444,7 @@ function messageHTML(m, idx) {
 function renderTopTitle() {
   const t = $('#topTitle');
   const editable = !!chat?.messages?.length;
-  t.textContent = chat?.title || (MODE === 'side' ? 'Rold Harness' : '');
+  t.textContent = chat?.title || (MODE === 'side' ? 'Rold' : '');
   t.disabled = !editable;
   t.title = editable ? 'Rename chat' : '';
   t.hidden = !t.textContent;
@@ -668,10 +668,10 @@ chrome.tabs.getCurrent?.().then((t) => { myTabId = t?.id ?? null; }).catch(() =>
 
 function notifyApproval(r, text) {
   if (!document.hidden && chat === r.chat) return;
-  chrome.notifications?.create(`rold-harness-approve:${r.chat.id}:${Date.now()}`, {
+  chrome.notifications?.create(`rold-approve:${r.chat.id}:${Date.now()}`, {
     type: 'basic',
     iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-    title: `Approve: ${r.chat.title || 'Rold Harness'}`,
+    title: `Approve: ${r.chat.title || 'Rold'}`,
     message: text,
     priority: 2,
   }, () => void chrome.runtime.lastError);
@@ -679,7 +679,7 @@ function notifyApproval(r, text) {
 
 chrome.notifications?.onClicked.addListener((nid) => {
   const [prefix, chatId] = nid.split(':');
-  if (prefix !== 'rold-harness-approve' || !runs.has(chatId)) return;
+  if (prefix !== 'rold-approve' || !runs.has(chatId)) return;
   chrome.notifications.clear(nid);
   if (myTabId != null) {
     chrome.tabs.update(myTabId, { active: true }).then((t) => chrome.windows.update(t.windowId, { focused: true })).catch(() => {});
@@ -827,7 +827,7 @@ async function send(text, { regenerate = false, target = null } = {}) {
   // Keeps the browser from freezing this page while it sits in a background tab.
   let release;
   const held = new Promise((res) => { release = res; });
-  navigator.locks?.request(`rold-harness-run-${thisChat.id}`, () => held).catch(() => {});
+  navigator.locks?.request(`rold-run-${thisChat.id}`, () => held).catch(() => {});
 
   const seen = new Set();
   const paint = thisRun.paint;
@@ -1478,14 +1478,14 @@ function bind() {
   $('#collapseSidebar').addEventListener('click', () => {
     $('.app').classList.add('sidebar-collapsed');
     $('.app').classList.remove('sidebar-open');
-    try { localStorage.setItem('rold-harness.sidebar', 'collapsed'); } catch {}
+    try { localStorage.setItem('rold.sidebar', 'collapsed'); } catch {}
   });
   $('#showSidebar').addEventListener('click', () => {
     const app = $('.app');
     if (MODE === 'side' || window.innerWidth < 860) app.classList.toggle('sidebar-open');
     else {
       app.classList.remove('sidebar-collapsed');
-      try { localStorage.setItem('rold-harness.sidebar', 'open'); } catch {}
+      try { localStorage.setItem('rold.sidebar', 'open'); } catch {}
     }
   });
   $('#scrim').addEventListener('click', closeSidebarOverlay);
@@ -1591,7 +1591,7 @@ async function init() {
   chats = await getChats();
   applyTheme();
   try {
-    if (localStorage.getItem('rold-harness.sidebar') === 'collapsed' || MODE === 'side') $('.app').classList.add('sidebar-collapsed');
+    if ((localStorage.getItem('rold.sidebar') ?? localStorage.getItem('rold-harness.sidebar')) === 'collapsed' || MODE === 'side') $('.app').classList.add('sidebar-collapsed');
   } catch {}
   tickClock();
   setInterval(tickClock, 15000);

@@ -1,4 +1,4 @@
-# Builds the Edge Add-ons package: dist/RoldHarness-<version>.zip
+# Builds the Edge Add-ons package: dist/Rold-<version>.zip
 # Usage: powershell -ExecutionPolicy Bypass -File store\build.ps1
 
 $ErrorActionPreference = 'Stop'
@@ -7,7 +7,7 @@ Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $root = Split-Path -Parent $PSScriptRoot
 $manifest = Get-Content (Join-Path $root 'manifest.json') -Raw | ConvertFrom-Json
 $dist = Join-Path $root 'dist'
-$zip = Join-Path $dist "RoldHarness-$($manifest.version).zip"
+$zip = Join-Path $dist "Rold-$($manifest.version).zip"
 New-Item -ItemType Directory -Force $dist | Out-Null
 if (Test-Path $zip) { Remove-Item $zip -Force }
 

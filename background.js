@@ -1,4 +1,4 @@
-// Rold Harness background service worker: side panel wiring, context menus and routines.
+// Rold background service worker: side panel wiring, context menus and routines.
 
 import { getRoutines, getChats } from './js/storage.js';
 import { nextRunTime, addRun } from './js/routines.js';
@@ -8,13 +8,13 @@ chrome.runtime.onInstalled.addListener(() => {
 
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
-      id: 'rold-harness-ask-selection',
-      title: 'Ask Rold Harness about “%s”',
+      id: 'rold-ask-selection',
+      title: 'Ask Rold about “%s”',
       contexts: ['selection'],
     });
     chrome.contextMenus.create({
-      id: 'rold-harness-summarize-page',
-      title: 'Summarize this page with Rold Harness',
+      id: 'rold-summarize-page',
+      title: 'Summarize this page with Rold',
       contexts: ['page'],
     });
   });
@@ -29,9 +29,9 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   chrome.sidePanel.open({ tabId: tab.id }).catch(() => {});
 
   let text = '';
-  if (info.menuItemId === 'rold-harness-ask-selection' && info.selectionText) {
+  if (info.menuItemId === 'rold-ask-selection' && info.selectionText) {
     text = `Explain this, from the page I'm on ("${tab.title || tab.url}"):\n\n> ${info.selectionText.trim()}`;
-  } else if (info.menuItemId === 'rold-harness-summarize-page') {
+  } else if (info.menuItemId === 'rold-summarize-page') {
     text = 'Summarize the page I am on. Lead with the key points, then anything notable.';
   }
   if (text) chrome.storage.session.set({ pendingPrompt: { text, ts: Date.now() } });
@@ -123,7 +123,7 @@ async function launch(r) {
 // Clicking a routine notification opens its chat.
 chrome.notifications?.onClicked.addListener((nid) => {
   const [prefix, chatId] = nid.split(':');
-  if (prefix !== 'rold-harness-chat') return;
+  if (prefix !== 'rold-chat') return;
   chrome.tabs.create({ url: chrome.runtime.getURL(`newtab.html${chatId ? `#chat=${chatId}` : ''}`) });
   chrome.notifications.clear(nid);
 });
