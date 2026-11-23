@@ -12,7 +12,7 @@ New-Item -ItemType Directory -Force $dist | Out-Null
 if (Test-Path $zip) { Remove-Item $zip -Force }
 
 # Only what the extension needs at runtime.
-$items = @('manifest.json', 'background.js', 'newtab.html', 'sidepanel.html', 'routine.html', 'LICENSE', 'css', 'js', 'icons')
+$items = @('manifest.json', 'background.js', 'newtab.html', 'sidepanel.html', 'routine.html', 'visual.html', 'LICENSE', 'css', 'js', 'icons')
 $files = foreach ($item in $items) {
   $p = Join-Path $root $item
   if (Test-Path $p -PathType Container) { Get-ChildItem $p -Recurse -File } else { Get-Item $p }
