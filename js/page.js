@@ -31,7 +31,12 @@ export function snapshotPage(opts) {
     let t = el.getAttribute('aria-label') || '';
     const lb = el.getAttribute('aria-labelledby');
     if (!t && lb) t = lb.split(/\s+/).map((i) => byId(el.getRootNode(), i)?.textContent || '').join(' ');
-    if (!t && el.labels && el.labels.length) t = el.labels[0].textContent;
+    if (!t && el.labels && el.labels.length) {
+      // A label wrapping its control would otherwise include the control's own text (select options).
+      const c = el.labels[0].cloneNode(true);
+      c.querySelectorAll('select,textarea,option,button').forEach((n) => n.remove());
+      t = c.textContent;
+    }
     if (!t && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) t = el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name') || '';
     if (!t) t = el.innerText || el.textContent || '';
     if (!clean(t)) t = el.getAttribute('title') || el.getAttribute('alt') || el.querySelector?.('img[alt]')?.getAttribute('alt') || (el.tagName === 'INPUT' ? el.value : '') || '';
@@ -54,9 +59,30 @@ export function snapshotPage(opts) {
     if (tag === 'SELECT') return 'select';
     if (ROLES.test(role)) return role;
     if (el.isContentEditable && !(el.parentElement && el.parentElement.isContentEditable)) return 'editable';
+    const inner = 'a[href],button,input,textarea,select,[role=button],[role=link],[role=checkbox],[role=tab]';
     const clicky = el.hasAttribute('onclick') || (el.getAttribute('tabindex') !== null && el.tabIndex >= 0) || /\bclick\b/.test(el.getAttribute('jsaction') || '');
-    if (clicky && getComputedStyle(el).cursor === 'pointer' &&
-      !el.querySelector('a[href],button,input,textarea,select,[role=button],[role=link],[role=checkbox],[role=tab]')) return 'clickable';
+    const cur = getComputedStyle(el).cursor;
+    if (clicky && cur === 'pointer' && !el.querySelector(inner)) return 'clickable';
+    if (el.getAttribute('draggable') === 'true') return 'draggable';
+    // Controls built from plain divs (icon toolbars, swatches, cards): the element where a hand or grab
+    // cursor starts. Listeners are invisible from here, so the cursor is the best hint there is.
+    if ((cur === 'pointer' || cur === 'grab') && el.parentElement && getComputedStyle(el.parentElement).cursor !== cur && !el.querySelector(inner)) {
+      const r = el.getBoundingClientRect();
+      if (r.width * r.height < innerWidth * innerHeight / 4) return cur === 'grab' ? 'draggable' : 'clickable';
+    }
+    return '';
+  };
+  // A hint for icon-only controls: the icon's name from its classes, sprite reference or test id.
+  const iconHint = (el) => {
+    const svg = el.querySelector('svg');
+    const bits = [el.getAttribute('data-testid'), el.getAttribute('data-icon'), el.getAttribute('data-action'),
+      svg?.querySelector('use')?.getAttribute('href') || svg?.querySelector('use')?.getAttribute('xlink:href'),
+      svg?.getAttribute('data-icon'), svg?.getAttribute('class'), el.querySelector('i[class]')?.getAttribute('class'), el.getAttribute('class')];
+    for (let i = 0; i < bits.length; i++) {
+      const b = String(bits[i] || '');
+      const m = b.match(/(?:^|[\s#_-])(?:icon|lucide|fa|bi|mdi|ti|glyphicon)[-_]([a-z][\w-]{1,30})/i) || (i < 3 && b.match(/^([a-z][\w-]{1,30})$/i));
+      if (m) return m[1].replace(/[-_]+/g, ' ');
+    }
     return '';
   };
   const states = (el, kind) => {
@@ -68,7 +94,8 @@ export function snapshotPage(opts) {
     if (a('aria-selected') === 'true' || (el.tagName === 'OPTION' && el.selected)) s.push('selected');
     if (a('aria-pressed') === 'true') s.push('pressed');
     if (a('aria-current') && a('aria-current') !== 'false') s.push('current');
-    if (el.disabled || a('aria-disabled') === 'true') s.push('disabled');
+    // :disabled also catches fields inside a disabled fieldset.
+    if (el.disabled || a('aria-disabled') === 'true' || (el.matches && el.matches(':disabled'))) s.push('disabled');
     if (el.required || a('aria-required') === 'true') s.push('required');
     if (a('aria-invalid') === 'true') s.push('invalid');
     if (el.tagName === 'DETAILS' || el.tagName === 'SUMMARY') { const d = el.closest('details'); if (d) s.push(d.open ? 'expanded' : 'collapsed'); }
@@ -116,6 +143,11 @@ export function snapshotPage(opts) {
   };
   const walk = (el, d, quiet) => {
     if (SKIP.test(el.tagName)) {
+      if (el.tagName === 'CANVAS' && shown(el)) {
+        const r = el.getBoundingClientRect();
+        if (r.width >= 80 && r.height >= 60) items.push({ d, id: idOf(el), t: `canvas ${Math.round(r.width)}×${Math.round(r.height)} (drawn content: look with a screenshot, act with click_at)${r.bottom < 0 || r.top > vh ? ' (offscreen)' : ''}`, off: r.bottom < 0 || r.top > vh });
+        return;
+      }
       if (el.tagName === 'IMG' && o.text && !quiet) { const alt = clean(el.getAttribute('alt'), 80); if (alt) items.push({ d, t: `image "${alt}"` }); }
       return;
     }
@@ -139,7 +171,13 @@ export function snapshotPage(opts) {
       if (r.width >= 1 && r.height >= 1) {
         const st = states(el, kind);
         const off = r.bottom < 0 || r.top > vh;
-        items.push({ d, id: idOf(el), t: `${kind} "${labelOf(el)}"${st.length ? ` (${st.join(', ')})` : ''}${extra(el, kind)}${off ? ' (offscreen)' : ''}`, off });
+        let name = labelOf(el);
+        if (!name) {
+          const h = iconHint(el);
+          const bg = !h && !el.querySelector('svg,img') && getComputedStyle(el).backgroundColor;
+          name = h ? `icon: ${h}` : el.querySelector('svg,img') ? 'icon only: identify it by its picture in screenshot labels=true' : bg && !/rgba\(.*, 0\)|transparent/.test(bg) ? `color ${bg}` : '';
+        }
+        items.push({ d, id: idOf(el), t: `${kind} "${name}"${st.length ? ` (${st.join(', ')})` : ''}${extra(el, kind)}${off ? ' (offscreen)' : ''}`, off });
         if (kind === 'select' || kind === 'editable') return;
         walkKids(el, d + 1, true);
         return;
@@ -165,9 +203,11 @@ export function snapshotPage(opts) {
   };
 
   let root = document.body || document.documentElement;
+  let missed = '';
   if (o.selector) {
     try { root = document.querySelector(o.selector); } catch { return { error: `Invalid selector: ${o.selector}` }; }
-    if (!root) return { error: `Nothing matches the selector ${o.selector} on this page.` };
+    // A guessed selector that misses shouldn't cost another call: list the whole page instead.
+    if (!root) { missed = o.selector; root = document.body || document.documentElement; }
   }
   if (root) walkKids(root, 0, false);
 
@@ -206,6 +246,7 @@ export function snapshotPage(opts) {
     items: list.map(({ d, id, t }) => ({ d, id, t })),
     changes,
     dialog,
+    missed,
     omitted,
     cut,
     scroll: { y: Math.round(scrollY), max: Math.max(0, document.documentElement.scrollHeight - innerHeight) },
@@ -219,12 +260,44 @@ export function describeEl(id) {
   if (id == null) { el = document.activeElement; while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement; }
   else el = find(id);
   if (!el || el === document.body) return null;
-  const raw = el.getAttribute('aria-label') || el.innerText || el.value || el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('title') || '';
+  let lab = '';
+  if (el.labels && el.labels.length) {
+    const c = el.labels[0].cloneNode(true);
+    c.querySelectorAll('select,textarea,option,button').forEach((n) => n.remove());
+    lab = c.textContent.trim();
+  }
+  const field = /^(SELECT|TEXTAREA)$/.test(el.tagName) || (el.tagName === 'INPUT' && !/^(submit|button|reset|image)$/.test(el.type));
+  const lb = el.getAttribute('aria-labelledby');
+  const named = lb ? lb.split(/\s+/).map((i) => (el.getRootNode().getElementById?.(i) || document.getElementById(i))?.textContent || '').join(' ').trim() : '';
+  const raw = el.getAttribute('aria-label') || named ||
+    (field ? lab || el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('title') : el.innerText || el.value) ||
+    el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('title') || '';
   const isSearch = (e) =>
     !!e && (e.type === 'search' || e.getAttribute('role') === 'searchbox' ||
       /search|buscar|query|^q$/i.test(`${e.name || ''} ${e.getAttribute('placeholder') || ''} ${e.getAttribute('aria-label') || ''}`));
   const form = el.form || el.closest('form');
+  // What a submit button sends, so an approval shows it ("Full name: Alex Doe · City: Springfield").
+  let filled = '';
+  if (form && !field) {
+    const parts = [];
+    for (const f of form.querySelectorAll('input,select,textarea')) {
+      if (parts.length >= 8) break;
+      const t = (f.type || '').toLowerCase();
+      if (/^(hidden|submit|button|reset|image|file)$/.test(t) || f.disabled) continue;
+      if ((t === 'checkbox' || t === 'radio') && !f.checked) continue;
+      const secret = t === 'password' || /cc-|one-time-code/.test(f.autocomplete || '') || /card.?num|cvc|cvv|iban/i.test(f.name || '');
+      let v = f.tagName === 'SELECT' ? f.selectedOptions?.[0]?.text || '' : t === 'checkbox' || t === 'radio' ? (f.labels?.[0]?.textContent || f.value || 'on') : f.value;
+      v = String(v || '').replace(/\s+/g, ' ').trim();
+      if (!v) continue;
+      let name = f.getAttribute('aria-label') || '';
+      if (!name && f.labels && f.labels.length) { const c = f.labels[0].cloneNode(true); c.querySelectorAll('select,textarea,option,button,input').forEach((n) => n.remove()); name = c.textContent; }
+      name = String(name || f.getAttribute('placeholder') || f.name || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+      parts.push((t === 'checkbox' || t === 'radio') ? v.slice(0, 40) : `${name ? name + ': ' : ''}${secret ? '•••' : v.slice(0, 60)}`);
+    }
+    filled = parts.join(' · ').slice(0, 400);
+  }
   return {
+    filled,
     tag: el.tagName.toLowerCase(),
     type: el.type || '',
     label: String(raw).trim().replace(/\s+/g, ' ').slice(0, 80),
@@ -240,6 +313,7 @@ export function clickEl(id) {
   let el = ref && ref.deref();
   if (!el || !el.isConnected) el = document.querySelector(`[data-rold-id="${id}"]`);
   if (!el) return { ok: false, error: 'Element not found (the page changed). Call get_page_elements again.' };
+  if (el.matches && el.matches(':disabled')) return { ok: false, error: 'That element is disabled right now. Something may need doing first (fill required fields, close a dialog, pick an option).' };
   el.scrollIntoView({ block: 'center', inline: 'center' });
   const r = el.getBoundingClientRect();
   const x = r.left + r.width / 2;
@@ -270,8 +344,10 @@ export function typeEl(id, text, submit, append) {
   if (!el || !el.isConnected) el = document.querySelector(`[data-rold-id="${id}"]`);
   if (!el) return { ok: false, error: 'Element not found (the page changed). Call get_page_elements again.' };
   if (el.type === 'password') return { ok: false, error: 'Typing into password fields is not allowed. Ask the user to do it.' };
+  if ((el.matches && el.matches(':disabled')) || el.readOnly) return { ok: false, error: `That field is ${el.readOnly ? 'read-only' : 'disabled'} right now. Something may need doing first (close a dialog or banner, pick an earlier option), or it isn't meant to be typed into.` };
   el.scrollIntoView({ block: 'center' });
   el.focus();
+  let chose = '';
   if (el.isContentEditable) {
     const sel = getSelection();
     if (append) { sel.selectAllChildren(el); sel.collapseToEnd(); }
@@ -290,6 +366,7 @@ export function typeEl(id, text, submit, append) {
     el.value = opt.value;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+    chose = opt.text.trim();
   } else if (/^(INPUT|TEXTAREA)$/.test(el.tagName)) {
     const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
@@ -307,7 +384,7 @@ export function typeEl(id, text, submit, append) {
     const form = el.form || el.closest?.('form');
     if (notCancelled && form) form.requestSubmit ? form.requestSubmit() : form.submit();
   }
-  return { ok: true };
+  return { ok: true, chose };
 }
 
 export function pressKeyEl(id, key) {
@@ -379,4 +456,42 @@ export async function runInPage(src) {
     const msg = String(e && e.message || e);
     return { ok: false, error: msg, blocked: e instanceof EvalError || /unsafe-eval|Content Security Policy|TrustedScript|Trusted Type/i.test(msg) };
   }
+}
+
+// Draws numbered boxes over the controls listed by the last snapshotPage (same ids), for a
+// labeled screenshot; drawMarks(false) removes them. Skips hidden, offscreen and covered elements.
+export function drawMarks(on) {
+  const old = document.getElementById('__rold_marks');
+  if (old) old.remove();
+  const S = window.__rold;
+  if (!on || !S) return [];
+  const W = innerWidth, H = innerHeight;
+  const colors = ['#d7263d', '#1b998b', '#3a56d4', '#e07a00', '#8e3bc8', '#0a7a3e', '#b0306f', '#6b5b00'];
+  const layer = document.createElement('div');
+  layer.id = '__rold_marks';
+  layer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;contain:layout;';
+  const shown = [];
+  for (const [id, ref] of S.els) {
+    const el = ref.deref();
+    if (!el || !el.isConnected) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 3 || r.height < 3 || r.bottom < 0 || r.right < 0 || r.top > H || r.left > W) continue;
+    if (el.checkVisibility && !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) continue;
+    const cx = Math.min(W - 1, Math.max(0, r.left + r.width / 2)), cy = Math.min(H - 1, Math.max(0, r.top + r.height / 2));
+    let top = document.elementFromPoint(cx, cy);
+    while (top && top.shadowRoot) { const inner = top.shadowRoot.elementFromPoint(cx, cy); if (!inner || inner === top) break; top = inner; }
+    if (top && top !== el && !el.contains(top) && !top.contains(el) && !(el.labels && [...el.labels].some((l) => l.contains(top)))) continue;
+    const c = colors[shown.length % colors.length];
+    const b = document.createElement('div');
+    b.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;outline:2px solid ${c};outline-offset:-1px;box-sizing:border-box;`;
+    const t = document.createElement('span');
+    t.textContent = id;
+    t.style.cssText = `position:absolute;left:-1px;${r.top > 15 ? 'top:-15px' : 'top:0'};background:${c};color:#fff;font:bold 11px/14px Arial,sans-serif;padding:0 3px;border-radius:2px;white-space:nowrap;`;
+    b.append(t);
+    layer.append(b);
+    shown.push(id);
+    if (shown.length >= 150) break;
+  }
+  document.documentElement.append(layer);
+  return shown;
 }

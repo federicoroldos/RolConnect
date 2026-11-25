@@ -3,7 +3,7 @@
 
 import { getMemories, saveMemories, saveRoutine, getRoutines, deleteRoutine, getReads, addRead } from './storage.js';
 import { normalizeSchedule, nextRunTime, describeSchedule } from './routines.js';
-import { snapshotPage, describeEl, clickEl, typeEl, pressKeyEl, scrollEl, runInPage } from './page.js';
+import { snapshotPage, describeEl, clickEl, typeEl, pressKeyEl, scrollEl, runInPage, drawMarks } from './page.js';
 import { SKILLS, getSkill, skillText } from './skills.js';
 
 const MAX_TEXT = 15000;
@@ -35,16 +35,39 @@ async function openAgentTab(url, ctx, active = false) {
 }
 
 // Crucial actions wait for the user's approval in Guard mode (send, pay, delete, submit…).
-const CRUCIAL = /\b(send|submit|post|publish|tweet|reply|comment|pay|buy|purchase|order|checkout|check out|confirm|delete|remove|unsubscribe|transfer|book|reserve|donate|sign up|subscribe|save|apply|enviar|publicar|responder|comentar|pagar|comprar|pedir|confirmar|eliminar|borrar|quitar|suscribir|reservar|guardar|aplicar|donar)\b/i;
+const CRUCIAL = /\b(send|submit|post|publish|tweet|reply|comment|pay|buy|purchase|order|confirm|delete|remove|unsubscribe|transfer|book|reserve|donate|sign up|subscribe|save|apply|enviar|publicar|responder|comentar|pagar|comprar|pedir|confirmar|eliminar|borrar|quitar|suscribir|reservar|guardar|aplicar|donar)\b/i;
 
+// Clicks that only stage something (a cart, a wishlist) never need approval on their own.
+const HARMLESS = /^\s*(add to (cart|bag|basket|trolley|wishlist|wish list|favorites|favourites)|añadir al carrito|agregar al carrito|añadir a la cesta|añadir a favoritos)(?![a-z])/i;
+const crucialClick = (d) => !d.search && !HARMLESS.test(d.label || '') && (d.submit || CRUCIAL.test(d.label));
+
+// The same action approved a moment ago (a "Delete" and then the page's own "Delete" confirm
+// dialog) is one decision: the second identical request passes once without asking again.
 async function approve(ctx, text, crucial) {
   if (!crucial || ctx.permission === 'full') return true;
-  return ctx.confirm(text);
+  const last = ctx.run?.lastApproval;
+  if (last && last.text === text && Date.now() - last.at < 30000) {
+    ctx.run.lastApproval = null;
+    return true;
+  }
+  // The user just approved this through request_approval ("Place the order for …?"): the click on
+  // "Place order" that carries it out shouldn't ask again. Every word of the control's label must
+  // appear in what they approved, and it counts once.
+  const asked = ctx.run?.askedApproval;
+  const label = /“([^”]+)”/.exec(text)?.[1] || '';
+  const words = label.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || [];
+  if (asked && Date.now() - asked.at < 60000 && words.length && words.every((w) => asked.text.includes(w))) {
+    ctx.run.askedApproval = null;
+    return true;
+  }
+  const ok = await ctx.confirm(text);
+  if (ok && ctx.run) ctx.run.lastApproval = { text, at: Date.now() };
+  return ok;
 }
 
 const CONSEQUENTIAL = {
   type: 'boolean',
-  description: 'true if this sends, posts, pays, buys, books, deletes, submits a form or changes settings.',
+  description: 'true if it sends, posts, pays, buys, books, deletes, submits or changes settings. Not for adding to a cart, filtering, searching or moving to the next step.',
 };
 
 // ---------------------------------------------------------------------------
@@ -56,12 +79,16 @@ function readPage(maxLen, docArg, selector) {
   const live = !docArg;
   const title = (doc.title || '').trim();
   const url = live ? location.href : '';
+  let missed = '';
   if (selector) {
     let el = null;
     try { el = doc.querySelector(selector); } catch {}
-    if (!el) return { title, url, text: '', error: 'Nothing matches the selector ' + selector + '.' };
-    const t = (el.innerText || el.textContent || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-    return { title, url, text: t.length > maxLen ? t.slice(0, maxLen) + '\n\n[truncated, ' + t.length + ' characters total]' : t };
+    if (el) {
+      const t = (el.innerText || el.textContent || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+      return { title, url, text: t.length > maxLen ? t.slice(0, maxLen) + '\n\n[truncated, ' + t.length + ' characters total]' : t };
+    }
+    // A guessed selector that misses shouldn't cost another call: read the whole page instead.
+    missed = '[Nothing matches the selector ' + selector + ', so this is the whole page.]\n\n';
   }
   const main = doc.querySelector('article, main, [role="main"]');
   const root = main && (main.textContent || '').trim().length > 400 ? main : doc.body;
@@ -98,7 +125,47 @@ function readPage(maxLen, docArg, selector) {
     .trim();
   const total = text.length;
   if (total > maxLen) text = text.slice(0, maxLen) + `\n\n[truncated, ${total} characters total]`;
-  return { title, url, text };
+  return { title, url, text: missed + text };
+}
+
+// Passages of a page's text that mention a phrase (or, failing that, all of its words).
+// Self-contained: injected with chrome.scripting.
+function findText(query, selector) {
+  let root = document.body || document.documentElement;
+  if (selector) { try { root = document.querySelector(selector) || root; } catch {} }
+  const text = String(root.innerText || root.textContent || '');
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
+  const q = norm(query.trim().replace(/^@/, '')).trim();
+  const words = q.split(' ').filter((w) => w.length > 1);
+  const inner = (el) => el.innerText || el.textContent || '';
+  // Each hit is the smallest box around the match with some substance (a post, a table row, a
+  // paragraph), so what belongs together stays together.
+  const search = (fits) => {
+    const seen = new Set();
+    const out = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const first = words[0] || q;
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (!norm(n.nodeValue).includes(first)) continue;
+      let el = n.parentElement;
+      if (!el || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(el.tagName)) continue;
+      const unit = (e) => /^(TR|LI|ARTICLE|DT|DD|P|H[1-6])$/.test(e.tagName) || /^(row|listitem|article)$/.test(e.getAttribute('role') || '');
+      while (el && el !== root && el.parentElement && !(fits(norm(inner(el))) && (unit(el) || inner(el).trim().length >= 60))) {
+        if (fits(norm(inner(el))) && inner(el.parentElement).length > 1500) break; // don't swallow a whole list
+        el = el.parentElement;
+      }
+      if (!el || !fits(norm(inner(el))) || seen.has(el)) continue;
+      if ([...seen].some((s) => s.contains(el) || el.contains(s))) continue;
+      seen.add(el);
+      out.push(inner(el).replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n').trim().slice(0, 700));
+    }
+    return out;
+  };
+  let hits = search((t) => t.includes(q));
+  let byWords = false;
+  if (!hits.length && words.length > 1) { hits = search((t) => words.every((w) => t.includes(w))); byWords = true; }
+  const loading = /loading|load more|show more/i.test(text.slice(-200));
+  return { title: document.title, url: location.href, hits: hits.slice(0, 25), total: hits.length, words: byWords && hits.length > 0, chars: text.length, loading };
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +212,7 @@ async function pageView(tabId, opts = {}) {
     .slice(0, 6);
 
   const head = [];
+  if (top.missed) head.push(`Nothing matches the selector ${top.missed}, so this is the whole page.`);
   if (top.dialog) head.push(`A dialog is open ("${top.dialog}"). If it blocks the task, deal with it first (close, accept or fill it).`);
   let body;
   let changed = 0;
@@ -483,6 +551,19 @@ async function toPage(tabId, x, y) {
   return { x: px / vp.scale, y: py / vp.scale };
 }
 
+// Viewport center of an element from get_page_elements (isolated world, where the ids live).
+// The drag start is scrolled into view; a drop target low on the page aims at its visible top part.
+function centerOfId(id, start) {
+  const ref = window.__rold?.els.get(String(id));
+  const el = ref && ref.deref();
+  if (!el || !el.isConnected) return null;
+  let r = el.getBoundingClientRect();
+  if (start && (r.top < 0 || r.bottom > innerHeight)) { el.scrollIntoView({ block: 'center' }); r = el.getBoundingClientRect(); }
+  const top = Math.max(r.top, 0), bottom = Math.min(r.bottom, innerHeight);
+  const y = bottom > top ? (top + Math.min(bottom, top + 200)) / 2 : r.top + r.height / 2;
+  return { x: r.left + r.width / 2, y };
+}
+
 // What is under a point (for Guard approvals), self-contained for Runtime.evaluate.
 function pointInfo(x, y) {
   let el = document.elementFromPoint(x, y);
@@ -588,7 +669,7 @@ const str = (description) => ({ type: 'string', description });
 const int = (description) => ({ type: 'integer', description });
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
-const TAB_ID = int("Tab id from list_tabs. Omit to use the user's current tab.");
+const TAB_ID = int("Tab id (omit for the user's current tab).");
 const EL_ID = str('Element id from get_page_elements, e.g. "12", or "f3:7" for an element inside a frame.');
 const DECLINED = 'The user did not approve this. Do not retry it; ask them how to proceed.';
 const MIME = {
@@ -678,6 +759,7 @@ export const TOOLS = [
     async run({ url }, ctx) {
       url = normalizeUrl(url);
       let page = null;
+      let scripted = true; // unknown until fetched: assume the page may need a real tab
       try {
         const res = await fetch(url, { credentials: 'omit', signal: ctx.signal, redirect: 'follow' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -687,6 +769,8 @@ export const TOOLS = [
           return { content: `The URL is a PDF (${url}). PDFs can't be read by this tool; try another source or an HTML version.` };
         }
         const body = await res.text();
+        // Built by JavaScript (an app shell, script bundles, a noscript notice)? Then a tab may show more.
+        scripted = /<script|<noscript|id=["'](root|app|__next|__nuxt)["']/i.test(body);
         if (/html|xml/i.test(type) || /^\s*</.test(body)) {
           const doc = new DOMParser().parseFromString(body, 'text/html');
           page = readPage(MAX_TEXT, doc);
@@ -697,7 +781,8 @@ export const TOOLS = [
       } catch (e) {
         if (e.name === 'AbortError') throw e;
       }
-      if (!page || page.text.length < 400) {
+      // A short static page is complete as fetched; loading it again in a tab only costs time.
+      if (!page || page.text.length < 80 || (page.text.length < 400 && scripted)) {
         try {
           const viaTab = await readViaTab(url, ctx);
           if (viaTab && (!page || viaTab.text.length > page.text.length)) page = viaTab;
@@ -762,11 +847,28 @@ export const TOOLS = [
     parallel: true,
     kind: 'read',
     description:
-      "Read the text of an open tab, including pages the user is logged into. For a browser-internal page (edge://, chrome://), captures its visible area instead. Defaults to the user's current tab. Use this when they say \"this page\". Pass selector (CSS) to read just one part of a long page.",
-    parameters: obj({ tab_id: TAB_ID, selector: str('CSS selector of the part to read (optional).') }),
-    label: (a) => (a.tab_id ? 'Reading a tab' : 'Reading your tab'),
-    async run({ tab_id, selector }, ctx) {
+      "Read the text of an open tab, including pages the user is logged into. For a browser-internal page (edge://, chrome://), captures its visible area instead. Defaults to the user's current tab. Use this when they say \"this page\". Pass selector (CSS) to read just one part of a long page, or find to get only the passages that mention something (searches all of the page's text, however long).",
+    parameters: obj({
+      tab_id: TAB_ID,
+      selector: str('CSS selector of the part to read (optional).'),
+      find: str('Words or a name to look for, e.g. "quietfox" or "refund policy" (optional). Returns each passage that contains them.'),
+    }),
+    label: (a) => (a.find ? `Looking for “${String(a.find).slice(0, 40)}”` : a.tab_id ? 'Reading a tab' : 'Reading your tab'),
+    async run({ tab_id, selector, find }, ctx) {
       const tab = await targetTab(tab_id);
+      if (find && isWebUrl(tab.url)) {
+        const r = await inject(tab.id, findText, [String(find), selector || '']);
+        const head = `Tab id=${tab.id}\nTitle: ${r.title}\nURL: ${r.url}\n\n`;
+        if (!r.hits.length) {
+          return { content: `${head}“${find}” does not appear in the page text (${r.chars.toLocaleString()} characters searched${r.loading ? '; the page may still be loading more as you scroll' : ''}). Images, canvases and unloaded parts aren't searched.`, detail: 'No matches' };
+        }
+        return {
+          content: `${head}${r.total} passage${r.total === 1 ? ' mentions' : 's mention'} “${find}”${r.words ? ' (matched by its words, not the exact phrase)' : ''}${r.total > r.hits.length ? `, first ${r.hits.length} shown` : ''}:\n\n${r.hits.join('\n---\n')}`,
+          sources: [{ title: r.title || host(r.url), url: r.url }],
+          detail: `${r.total} found`,
+          url: r.url,
+        };
+      }
       if (!isWebUrl(tab.url)) {
         const header = `Tab id=${tab.id}\nTitle: ${tab.title}\nURL: ${tab.url}\n\n`;
         if (!isInternalUrl(tab.url)) {
@@ -871,8 +973,8 @@ export const TOOLS = [
       const { frameId, local } = parseEl(element_id);
       const d = await injectAt(tab.id, frameId, describeEl, [local]);
       if (!d) return { content: 'Element not found (the page changed). Call get_page_elements again.', isError: true };
-      const crucial = !!consequential || (!d.search && (d.submit || CRUCIAL.test(d.label)));
-      const ok = await approve(ctx, `Click ${d.tag} “${d.label || '(no label)'}” on ${host(tab.url)}`, crucial);
+      const crucial = !!consequential || crucialClick(d);
+      const ok = await approve(ctx, `Click ${d.tag} “${d.label || '(no label)'}” on ${host(tab.url)}${d.filled ? `\nSends: ${d.filled}` : ''}`, crucial);
       if (!ok) return { content: DECLINED, isError: true };
       const r = await injectAt(tab.id, frameId, clickEl, [local]);
       if (!r?.ok) return { content: r?.error || 'Click failed.', isError: true };
@@ -910,22 +1012,37 @@ export const TOOLS = [
       const r = await injectAt(tab.id, frameId, typeEl, [local, String(text), !!submit, !!append]);
       if (!r?.ok) return { content: r?.error || 'Typing failed.', isError: true };
       const after = await afterPageAction(tab.id, submit ? 1200 : 300);
-      return { content: `Typed into “${d.label || d.tag}”.\n${after.text}`, url: after.tab.url };
+      return { content: `${r.chose ? `Chose “${r.chose}” in` : 'Typed into'} “${d.label || d.tag}”.\n${after.text}`, url: after.tab.url };
     },
   },
   {
     name: 'scroll_page',
     kind: 'tab',
     browserControl: true,
-    description: 'Scroll a tab, or one scrollable part of it (a list, a chat, a side panel) by giving an element id inside it. Useful before get_page_elements on long or lazy-loading pages.',
+    description: 'Scroll a tab, or one scrollable part of it (a list, a chat, a side panel) by giving an element id inside it. "bottom" keeps scrolling while an endless feed loads more, so one call loads it all (up to about 20 seconds). Useful before get_page_elements or read_tab find on long or lazy-loading pages.',
     parameters: obj({ tab_id: TAB_ID, direction: { type: 'string', enum: ['down', 'up', 'top', 'bottom'] }, element_id: str('Scroll the scrollable area containing this element (optional).') }, ['direction']),
     label: (a) => `Scrolling ${a.direction}`,
-    async run({ tab_id, direction, element_id }) {
+    async run({ tab_id, direction, element_id }, ctx) {
       const tab = await targetTab(tab_id);
       const el = element_id == null || element_id === '' ? null : parseEl(element_id);
-      const r = await injectAt(tab.id, el?.frameId || 0, scrollEl, [direction, el ? el.local : null]);
+      const go = () => injectAt(tab.id, el?.frameId || 0, scrollEl, [direction, el ? el.local : null]);
+      let r = await go();
       await sleep(600);
-      return { content: `Scrolled ${direction}${r.element ? ' inside that area' : ''}. Position ${r.y}/${r.max}px.${r.y >= r.max - 2 && direction === 'down' ? ' (at the end)' : ''}` };
+      let loads = 0;
+      let quiet = 2;
+      if (direction === 'bottom') {
+        // Endless feeds grow when the bottom comes into view: keep going until the height settles.
+        const until = Date.now() + 20000;
+        for (quiet = 0; quiet < 2 && Date.now() < until;) {
+          if (ctx?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+          await sleep(quiet ? 900 : 300);
+          const next = await go();
+          if (next.max > r.max + 2) { loads++; quiet = 0; } else quiet++;
+          r = next;
+        }
+      }
+      const more = loads ? ` The page loaded more content ${loads} time${loads === 1 ? '' : 's'}${quiet < 2 ? ' and may still have more (scroll bottom again)' : ''}.` : '';
+      return { content: `Scrolled ${direction}${r.element ? ' inside that area' : ''}. Position ${r.y}/${r.max}px.${r.y >= r.max - 2 && (direction === 'down' || direction === 'bottom') ? ' (at the end)' : ''}${more}` };
     },
   },
   {
@@ -995,13 +1112,14 @@ export const TOOLS = [
       const steps = (Array.isArray(actions) ? actions : []).slice(0, 20);
       if (!steps.length) return { content: 'No actions given.', isError: true };
       const crucialStep = (s, d) =>
-        s.action === 'click' ? !d.search && (d.submit || CRUCIAL.test(d.label))
+        s.action === 'click' ? crucialClick(d)
         : s.action === 'type' ? !!s.submit && !d.search
         : s.key === 'Enter' && !d.search && (d.multiline || d.submit || d.tag === 'input');
       // One approval up front for the crucial steps that are already on the page.
       const approved = new Set();
       if (ctx.permission !== 'full') {
         const crucial = [];
+        const typed = [];
         for (let i = 0; i < steps.length; i++) {
           const s = steps[i];
           if (!['click', 'type', 'key'].includes(s.action)) continue;
@@ -1012,10 +1130,14 @@ export const TOOLS = [
           } catch {}
           if (!d) continue;
           if (s.action === 'type' && d.password) return { content: `Refused: step ${i + 1} types into a password, one-time code or payment field. Ask the user to fill it in.`, isError: true };
-          if (crucialStep(s, d)) { crucial.push(`${i + 1}. ${s.action} “${d.label || d.tag}”`); approved.add(i); }
+          if (s.action === 'type') typed.push(`${d.label || d.tag}: ${String(s.text ?? '').replace(/\s+/g, ' ').slice(0, 60)}`);
+          if (crucialStep(s, d)) {
+            crucial.push(`${i + 1}. ${s.action} “${d.label || d.tag}”${s.action === 'click' && d.filled && !typed.length ? ` (sends: ${d.filled})` : ''}`);
+            approved.add(i);
+          }
         }
         if (crucial.length || consequential) {
-          const ok = await approve(ctx, `Run ${steps.length} actions on ${host(tab.url)}, including:\n${crucial.join('\n') || 'a consequential step'}`, true);
+          const ok = await approve(ctx, `Run ${steps.length} actions on ${host(tab.url)}, including:\n${crucial.join('\n') || 'a consequential step'}${crucial.length && typed.length ? `\nFilling in: ${typed.slice(0, 8).join(' · ')}` : ''}`, true);
           if (!ok) return { content: DECLINED, isError: true };
           if (consequential) steps.forEach((_, i) => approved.add(i));
         }
@@ -1033,7 +1155,7 @@ export const TOOLS = [
             const d = await injectAt(tab.id, el.frameId, describeEl, [el.local]);
             if (!d) throw new Error(`element ${s.element_id} not found`);
             if (s.action === 'type' && d.password) throw new Error('that is a password or payment field; ask the user to fill it in');
-            if (crucialStep(s, d) && !approved.has(i) && !(await approve(ctx, `${s.action === 'click' ? 'Click' : 'Type into'} “${d.label || d.tag}” on ${host(tab.url)}`, true))) {
+            if (crucialStep(s, d) && !approved.has(i) && !(await approve(ctx, `${s.action === 'click' ? 'Click' : 'Type into'} “${d.label || d.tag}” on ${host(tab.url)}${s.action === 'click' && d.filled ? `\nSends: ${d.filled}` : ''}`, true))) {
               log.push(`${n} ${s.action} “${d.label}”: not approved by the user. Stopped.`);
               break;
             }
@@ -1041,7 +1163,7 @@ export const TOOLS = [
               ? await injectAt(tab.id, el.frameId, clickEl, [el.local])
               : await injectAt(tab.id, el.frameId, typeEl, [el.local, String(s.text ?? ''), !!s.submit, !!s.append]);
             if (!r?.ok) throw new Error(r?.error || 'failed');
-            log.push(`${n} ${s.action === 'click' ? 'clicked' : 'typed into'} ${d.tag} “${d.label}”${r.covered ? ` (warning: ${r.covered} was on top of it)` : ''}`);
+            log.push(`${n} ${s.action === 'click' ? 'clicked' : r.chose ? `chose “${r.chose}” in` : 'typed into'} ${d.tag} “${d.label}”${r.covered ? ` (warning: ${r.covered} was on top of it)` : ''}`);
             await sleep(s.action === 'click' || s.submit ? 700 : 150);
             if (s.action === 'click' || s.submit) await waitForTab(tab.id, 8000);
           } else if (s.action === 'key') {
@@ -1160,12 +1282,34 @@ export const TOOLS = [
     kind: 'screen',
     needsComputer: true,
     description:
-      'See a tab: returns a screenshot of its visible area. Use it to understand visual layouts, canvas apps, maps, editors, charts and images, and to find x/y coordinates for click_at, scroll_at and drag. Works on background tabs. Set show_user=true to also show the image under your answer, as proof that a browser task is done or when the user asked to see something.',
-    parameters: obj({ tab_id: TAB_ID, show_user: { type: 'boolean', description: 'Also show this screenshot to the user in the chat.' } }),
-    label: (a) => (a.show_user ? 'Taking a screenshot for you' : 'Looking at the screen'),
-    async run({ tab_id, show_user }, ctx) {
+      'See a tab: returns a screenshot of its visible area. Use it to understand visual layouts, canvas apps, maps, editors, charts and images, and to find x/y coordinates for click_at, scroll_at and drag. Works on background tabs. labels=true boxes every control with its element id (the same ids as get_page_elements) and lists them, so you can see the layout and then act by id with click_element / type_text: the best first look at an unfamiliar or visual page. Set show_user=true to also show the image under your answer, as proof that a browser task is done or when the user asked to see something.',
+    parameters: obj({
+      tab_id: TAB_ID,
+      labels: { type: 'boolean', description: 'Box and number the controls with their element ids (default false).' },
+      show_user: { type: 'boolean', description: 'Also show this screenshot to the user in the chat.' },
+    }),
+    label: (a) => (a.show_user ? 'Taking a screenshot for you' : a.labels ? 'Looking at the page layout' : 'Looking at the screen'),
+    async run({ tab_id, labels, show_user }, ctx) {
       const tab = await controlTab(tab_id, ctx);
-      const r = await screenshotResult(tab);
+      let r;
+      if (labels && !show_user) {
+        // Fresh ids for the whole view, boxes drawn for the visible ones, then removed right after the capture.
+        let view = null, marked = [];
+        try {
+          view = await pageView(tab.id, {});
+          marked = (await injectAt(tab.id, 0, drawMarks, [true])) || [];
+        } catch {}
+        try {
+          r = await screenshotResult(tab);
+        } finally {
+          injectAt(tab.id, 0, drawMarks, [false]).catch(() => {});
+        }
+        if (view && !view.error) {
+          const ids = new Set(marked);
+          const visible = view.text.split('\n').filter((l) => { const m = /^\s*\[(\d+)\]/.exec(l); return !m || ids.has(m[1]); }).join('\n');
+          r.content += `\n${marked.length} visible controls are boxed and numbered with their element ids. Act on them with click_element / type_text by id; use click_at only for things without a box.\n${visible}`;
+        }
+      } else r = await screenshotResult(tab);
       if (!show_user || !r.image) return { ...r, url: tab.url };
       return { ...r, url: tab.url, showUser: true, content: r.content + '\nThis screenshot is shown to the user under your answer.' };
     },
@@ -1195,7 +1339,7 @@ export const TOOLS = [
       const d = await evalInTab(tab.id, pointInfo, p.x, p.y);
       const what = d ? `${d.tag}${d.label ? ` “${d.label}”` : ''}` : `point ${x}, ${y}`;
       if (action !== 'hover') {
-        const crucial = !!consequential || (!!d && !d.search && (d.submit || CRUCIAL.test(d.label)));
+        const crucial = !!consequential || (!!d && crucialClick(d));
         const ok = await approve(ctx, `Click ${what} on ${host(tab.url)}`, crucial);
         if (!ok) return { content: 'The user did not approve this click. Do not retry it; ask them how to proceed.', isError: true };
       }
@@ -1278,13 +1422,26 @@ export const TOOLS = [
     kind: 'click',
     browserControl: true,
     needsComputer: true,
-    description: 'Drag with the mouse from one point to another (sliders, maps, drawing, moving items). Coordinates from the latest screenshot. Returns a new screenshot.',
-    parameters: obj({ tab_id: TAB_ID, from_x: COORD('Start X'), from_y: COORD('Start Y'), to_x: COORD('End X'), to_y: COORD('End Y') }, ['from_x', 'from_y', 'to_x', 'to_y']),
-    label: (a) => `Dragging to ${a.to_x}, ${a.to_y}`,
-    async run({ tab_id, from_x, from_y, to_x, to_y }, ctx) {
+    description: 'Drag with the mouse from one point to another (sliders, maps, drawing, moving cards between lists). Give each end as screenshot coordinates or as an element id (from_id / to_id, e.g. a draggable card and the column to drop it in). Returns a new screenshot: check the result.',
+    parameters: obj({
+      tab_id: TAB_ID,
+      from_id: str('Element id to drag (instead of from_x/from_y).'), to_id: str('Element id to drop onto (instead of to_x/to_y).'),
+      from_x: COORD('Start X'), from_y: COORD('Start Y'), to_x: COORD('End X'), to_y: COORD('End Y'),
+    }),
+    label: (a) => (a.to_id ? `Dragging onto element ${a.to_id}` : `Dragging to ${a.to_x}, ${a.to_y}`),
+    async run({ tab_id, from_id, to_id, from_x, from_y, to_x, to_y }, ctx) {
       const tab = await controlTab(tab_id, ctx);
-      const a = await toPage(tab.id, from_x, from_y);
-      const b = await toPage(tab.id, to_x, to_y);
+      const end = async (id, x, y, which) => {
+        if (id != null && id !== '') {
+          const c = await injectAt(tab.id, 0, centerOfId, [String(id), which === 'start']);
+          if (!c) throw new Error(`No element ${id} on the page. Call get_page_elements or screenshot labels=true again.`);
+          return c;
+        }
+        if (x == null || y == null) throw new Error(`Give ${which === 'start' ? 'from_id or from_x/from_y' : 'to_id or to_x/to_y'}.`);
+        return toPage(tab.id, x, y);
+      };
+      const a = await end(from_id, from_x, from_y, 'start');
+      const b = await end(to_id, to_x, to_y, 'end');
       await mouse(tab.id, 'mouseMoved', a.x, a.y);
       await mouse(tab.id, 'mousePressed', a.x, a.y, { button: 'left', buttons: 1, clickCount: 1 });
       const steps = 12;
@@ -1304,6 +1461,7 @@ export const TOOLS = [
     label: (a) => `Asking: ${String(a.action || '').slice(0, 80)}`,
     async run({ action }, ctx) {
       const ok = await ctx.confirm(String(action || 'Continue?'));
+      if (ok && ctx.run) ctx.run.askedApproval = { text: String(action || '').toLowerCase(), at: Date.now() };
       return { content: ok ? 'Approved by the user.' : 'Declined by the user. Do not do it; ask how to proceed.', detail: ok ? 'Approved' : 'Declined' };
     },
   },
@@ -1334,11 +1492,12 @@ export const TOOLS = [
     kind: 'memory',
     needsMemory: true,
     description:
-      'Remember something for future chats (stored on this device; the user can see and edit it). kind "fact" = lasting info about the user (preferences, name, location, projects); kind "task" = a notable outcome of a task. Never store secrets.',
-    parameters: obj({ text: str('One short, self-contained sentence.'), kind: { type: 'string', enum: ['fact', 'task'] } }, ['text']),
+      'Remember something for future chats (stored on this device; the user can see and edit it). kind "fact" = lasting info about the user (preferences, name, location, projects); kind "task" = a notable outcome of a task worth knowing later (not short-lived details like a 10-minute hold). Task memories are dated automatically. Never store secrets.',
+    parameters: obj({ text: str('One short, self-contained sentence, without a date.'), kind: { type: 'string', enum: ['fact', 'task'] } }, ['text']),
     label: (a) => `Remembering: ${String(a.text || '').slice(0, 60)}`,
     async run({ text, kind }, ctx) {
-      text = String(text || '').trim().slice(0, 500);
+      // The date is shown with each task memory, so drop one the model wrote in front.
+      text = String(text || '').trim().replace(/^[([]?\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}[)\]]?[\s:,-]*/, '').slice(0, 500);
       if (!text) return { content: 'Nothing to save.', isError: true };
       const list = await getMemories(ctx.settings);
       if (list.some((m) => m.text.toLowerCase() === text.toLowerCase())) return { content: 'Already remembered.' };

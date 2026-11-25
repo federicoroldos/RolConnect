@@ -1282,7 +1282,8 @@ async function signOut(pane) {
 
 function modelsStale(key, cfg) {
   const list = cfg.models || [];
-  return !list.length || !cfg.efforts || !list.every((m) => modelAllowed(key, m)) || !modelAllowed(key, cfg.model);
+  // cfg.vision (which models take images) arrived in 0.8.1: refresh lists saved before that.
+  return !list.length || !cfg.efforts || (key !== 'chatgpt' && !cfg.vision) || !list.every((m) => modelAllowed(key, m)) || !modelAllowed(key, cfg.model);
 }
 
 // Load the provider's model list (runs automatically when a key is entered).

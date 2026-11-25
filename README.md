@@ -35,7 +35,7 @@ Built-in guides for Gmail, Outlook, Google Calendar, Docs, Drive and Maps, GitHu
 - Attach files and images to a message (📎, paste or drag and drop). It can also save what it makes as a file, or download one for you.
 
 ### 🖱️ Sees and uses any page
-With **Computer use** on (Settings → Agent), it takes screenshots of tabs and uses a real mouse and keyboard, so it works with anything on screen: canvas apps, maps, editors, drag and drop. It works in background tabs without switching away from what you're doing. While it does, Edge shows a *"started debugging this browser"* bar, which goes away when the task ends; clicking **Cancel** on it stops screen control. With models that can't see images, it falls back to reading the page.
+With **Computer use** on (Settings → Agent), it takes screenshots of tabs and uses a real mouse and keyboard, so it works with anything on screen: canvas apps, maps, editors, drag and drop. On an unfamiliar page it starts with a labeled screenshot that boxes and numbers every control, including icon-only buttons and color swatches, so it knows what it's looking at and what each thing does. It works in background tabs without switching away from what you're doing. While it does, Edge shows a *"started debugging this browser"* bar, which goes away when the task ends; clicking **Cancel** on it stops screen control. With models that can't see images, it falls back to reading the page.
 
 ### 🛡️ You decide how much it can do
 The pill under the chat box sets the permission mode:
@@ -107,14 +107,14 @@ Models load as soon as you paste a key or sign in. Under the chat box you can sw
 | :-- | :-- |
 | `web_search` | Search the web |
 | `read_url` | Read any page (falls back to a background tab for sites that need JavaScript) |
-| `list_tabs`, `read_tab` | See your open tabs and read them, including pages you're logged into |
+| `list_tabs`, `read_tab` | See your open tabs and read them, including pages you're logged into, or find every mention of something on a long page |
 | `browser_info` | Installed Rold and browser version, platform and current tab |
 | `open_tab`, `navigate_tab`, `scroll_page`, `close_tab` | Drive tabs |
 | `get_page_elements`, `click_element`, `type_text`, `press_key`, `wait` | Use pages: buttons, links, forms, menus. After an action it shows only what changed |
 | `batch_actions` | Several clicks, typing and keys on a page in one step |
 | `run_js` | Run a short script on a page to read or change it when clicking is too slow (asks first in Guard) |
-| `screenshot` | See a tab, including background tabs, and show it to you as proof |
-| `click_at`, `type_keys`, `scroll_at`, `drag` | Real mouse and keyboard at screen coordinates (Computer use) |
+| `screenshot` | See a tab, including background tabs, optionally with every control boxed and numbered; or show it to you as proof |
+| `click_at`, `type_keys`, `scroll_at`, `drag` | Real mouse and keyboard at screen coordinates or onto elements (Computer use) |
 | `request_approval`, `ask_user` | Ask you before doing something important, or ask a quick question |
 | `update_todos` | Keep a checklist for longer tasks |
 | `delegate` | Hand research to helpers that work in parallel |
