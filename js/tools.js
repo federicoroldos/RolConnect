@@ -3,7 +3,7 @@
 
 import { getMemories, saveMemories, saveRoutine, getRoutines, deleteRoutine, getReads, addRead } from './storage.js';
 import { normalizeSchedule, nextRunTime, describeSchedule } from './routines.js';
-import { snapshotPage, describeEl, clickEl, typeEl, pressKeyEl, scrollEl, runInPage, drawMarks } from './page.js';
+import { snapshotPage, describeEl, clickEl, typeEl, pressKeyEl, scrollEl, runInPage, drawMarks, armDialogs, takeDialogs } from './page.js';
 import { SKILLS, getSkill, skillText } from './skills.js';
 
 const MAX_TEXT = 15000;
@@ -32,6 +32,46 @@ async function openAgentTab(url, ctx, active = false) {
   const tab = await chrome.tabs.create({ url, active });
   await addToAgentGroup(tab.id, ctx);
   return tab;
+}
+
+// Native dialogs and new windows around one of the agent's own actions (see armDialogs in page.js).
+const DIALOG = {
+  dialog: { type: 'string', enum: ['accept', 'dismiss'], description: 'How to answer an alert/confirm/prompt the page opens because of this action. Default: dismiss (Cancel), or OK after a click the user approved. accept answers OK and counts as consequential.' },
+  dialog_text: { type: 'string', description: 'Answer to type into a prompt dialog this action opens (optional).' },
+};
+const dialogPlan = (a, approvedCrucial) => ({ accept: a.dialog === 'accept' || (a.dialog !== 'dismiss' && approvedCrucial), text: a.dialog_text ?? null });
+const tabIds = async () => new Set((await chrome.tabs.query({})).map((t) => t.id));
+
+async function armPage(tabId, frameId, plan) {
+  try {
+    await withTimeout(chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId || 0] }, world: 'MAIN', func: armDialogs, args: [plan] }), 3000, 'arm');
+  } catch {}
+}
+
+// What happened besides the page change: dialogs it answered, windows it opened.
+async function pageEvents(tabId, frameId, before, ctx) {
+  const out = [];
+  let seen = [];
+  try {
+    const [r] = await withTimeout(chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId || 0] }, world: 'MAIN', func: takeDialogs }), 3000, 'take');
+    seen = r?.result || [];
+  } catch {}
+  for (const s of seen) {
+    if (s.type === 'alert') out.push(`The page showed an alert: “${s.message}” (closed).`);
+    else if (s.type === 'confirm') out.push(`The page asked “${s.message}” in a confirm dialog, answered ${s.answer}.${s.answer === 'Cancel' ? ' To answer OK, do the same action again with dialog="accept".' : ''}`);
+    else if (s.type === 'prompt') out.push(`The page asked “${s.message}” in a prompt dialog, answered ${s.answer}.${s.answer === 'Cancel' ? ' To answer it, do the same action again with dialog_text set to the answer.' : ''}`);
+    else if (s.type === 'open') {
+      const t = await openAgentTab(s.url, ctx).catch(() => null);
+      if (t) before?.add(t.id);
+      out.push(t ? `The page opened ${s.url} in a new window: it's tab id=${t.id}.` : `The page tried to open ${s.url} in a new window.`);
+    }
+  }
+  if (before) {
+    for (const t of await chrome.tabs.query({}).catch(() => [])) {
+      if (!before.has(t.id)) out.push(`A new tab opened: id=${t.id} | ${t.title || ''} | ${t.url || t.pendingUrl || ''}`);
+    }
+  }
+  return out.length ? `\n${out.join('\n')}` : '';
 }
 
 // Crucial actions wait for the user's approval in Guard mode (send, pay, delete, submit…).
@@ -180,11 +220,20 @@ function parseEl(id) {
   throw new Error(`"${id}" is not an element id. Use an id from get_page_elements, like 12 or f3:7.`);
 }
 
+// A page frozen by a native dialog (one the agent didn't cause) never answers a script.
+const FROZEN = 'The page did not respond for 45 seconds: a browser dialog (alert, confirm, "Leave site?") may be open on it, or the page is frozen.';
+async function unfreeze(tabId) {
+  if (!attached.has(tabId)) return ' Ask the user to close the dialog, or turn on Computer use so Rold can.';
+  const ok = await cdp(tabId, 'Page.handleJavaScriptDialog', { accept: false }).then(() => true, () => false);
+  return ok ? ' Rold dismissed an open dialog; try again.' : ' Ask the user to check the tab.';
+}
+
 async function injectAt(tabId, frameId, func, args = []) {
   try {
-    const [res] = await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId || 0] }, func, args });
+    const [res] = await withTimeout(chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId || 0] }, func, args }), 45000, FROZEN);
     return res ? res.result : undefined;
   } catch (e) {
+    if (e.message === FROZEN) throw new Error(FROZEN + (await unfreeze(tabId)));
     if (frameId) throw new Error(`That frame is gone (${e.message}). Call get_page_elements again.`);
     throw new Error(`Can't access this tab (${e.message}). Browser-internal pages and the add-ons store are off limits.`);
   }
@@ -335,9 +384,10 @@ async function targetTab(tabId) {
 
 async function inject(tabId, func, args = []) {
   try {
-    const [res] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
+    const [res] = await withTimeout(chrome.scripting.executeScript({ target: { tabId }, func, args }), 45000, FROZEN);
     return res ? res.result : undefined;
   } catch (e) {
+    if (e.message === FROZEN) throw new Error(FROZEN + (await unfreeze(tabId)));
     throw new Error(`Can't access this tab (${e.message}). Browser-internal pages and the add-ons store are off limits. Use browser_info for the installed build.`);
   }
 }
@@ -966,28 +1016,36 @@ export const TOOLS = [
     kind: 'click',
     browserControl: true,
     description: 'Click an element by its id from get_page_elements. Returns what changed on the page afterwards. Set consequential=true for clicks that send, post, pay, buy, delete or submit.',
-    parameters: obj({ tab_id: TAB_ID, element_id: EL_ID, consequential: CONSEQUENTIAL }, ['element_id']),
+    parameters: obj({ tab_id: TAB_ID, element_id: EL_ID, consequential: CONSEQUENTIAL, ...DIALOG }, ['element_id']),
     label: (a) => `Clicking element ${a.element_id}`,
-    async run({ tab_id, element_id, consequential }, ctx) {
+    async run(args, ctx) {
+      const { tab_id, element_id, consequential } = args;
       const tab = await targetTab(tab_id);
       const { frameId, local } = parseEl(element_id);
       const d = await injectAt(tab.id, frameId, describeEl, [local]);
       if (!d) return { content: 'Element not found (the page changed). Call get_page_elements again.', isError: true };
-      const crucial = !!consequential || crucialClick(d);
-      const ok = await approve(ctx, `Click ${d.tag} “${d.label || '(no label)'}” on ${host(tab.url)}${d.filled ? `\nSends: ${d.filled}` : ''}`, crucial);
+      const crucial = !!consequential || crucialClick(d) || args.dialog === 'accept';
+      const ok = await approve(ctx, `Click ${d.tag} “${d.label || '(no label)'}” on ${host(tab.url)}${args.dialog === 'accept' ? ' and answer OK to the page’s dialog' : ''}${d.filled ? `\nSends: ${d.filled}` : ''}`, crucial);
       if (!ok) return { content: DECLINED, isError: true };
+      const before = await tabIds();
+      await armPage(tab.id, frameId, dialogPlan(args, crucial));
       const r = await injectAt(tab.id, frameId, clickEl, [local]);
       if (!r?.ok) return { content: r?.error || 'Click failed.', isError: true };
+      if (r.newTab) {
+        const t = await openAgentTab(r.newTab, ctx);
+        return { content: `Clicked ${d.tag} “${d.label}”: it opens in a new tab, now tab id=${t.id} (${r.newTab}).`, detail: d.label };
+      }
       const after = await afterPageAction(tab.id, 900);
+      const events = await pageEvents(tab.id, frameId, before, ctx);
       const warn = r.covered ? `\nWarning: ${r.covered} was on top of this element, so the page may not have received the click. Close that overlay first, or use click_at.` : '';
-      return { content: `Clicked ${d.tag} “${d.label}”.${warn}\n${after.text}`, detail: d.label, url: after.tab.url };
+      return { content: `Clicked ${d.tag} “${d.label}”.${warn}${events}\n${after.text}`, detail: d.label, url: after.tab.url };
     },
   },
   {
     name: 'type_text',
     kind: 'type',
     browserControl: true,
-    description: 'Type into an input, textarea or editable area by its id from get_page_elements (for a <select>, pass the option text). Replaces the current value unless append=true. Optionally press Enter / submit afterwards. Returns what changed on the page.',
+    description: 'Type into an input, textarea or editable area by its id from get_page_elements (for a <select>, pass the option text; for a slider, date or color input, pass the value). Replaces the current value unless append=true. Optionally press Enter / submit afterwards. Returns what changed on the page.',
     parameters: obj(
       {
         tab_id: TAB_ID,
@@ -1009,10 +1067,12 @@ export const TOOLS = [
       const crucial = !!consequential || (!!submit && !d.search);
       const ok = await approve(ctx, `Type “${text}” into “${d.label || d.tag}”${submit ? ' and submit' : ''} on ${host(tab.url)}`, crucial);
       if (!ok) return { content: DECLINED, isError: true };
+      if (submit) await armPage(tab.id, frameId, dialogPlan({}, crucial));
       const r = await injectAt(tab.id, frameId, typeEl, [local, String(text), !!submit, !!append]);
       if (!r?.ok) return { content: r?.error || 'Typing failed.', isError: true };
       const after = await afterPageAction(tab.id, submit ? 1200 : 300);
-      return { content: `${r.chose ? `Chose “${r.chose}” in` : 'Typed into'} “${d.label || d.tag}”.\n${after.text}`, url: after.tab.url };
+      const events = submit ? await pageEvents(tab.id, frameId, null, ctx) : '';
+      return { content: `${r.chose ? `Chose “${r.chose}” in` : 'Typed into'} “${d.label || d.tag}”.${events}\n${after.text}`, url: after.tab.url };
     },
   },
   {
@@ -1056,23 +1116,28 @@ export const TOOLS = [
         key: { type: 'string', enum: ['Enter', 'Escape', 'Tab', 'Backspace', 'Delete', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'] },
         element_id: str('Element id from get_page_elements (optional).'),
         consequential: CONSEQUENTIAL,
+        ...DIALOG,
       },
       ['key'],
     ),
     label: (a) => `Pressing ${a.key}`,
-    async run({ tab_id, key, element_id, consequential }, ctx) {
+    async run(args, ctx) {
+      const { tab_id, key, element_id, consequential } = args;
       const tab = await targetTab(tab_id);
       const k = key === 'Space' ? ' ' : key;
       const el = element_id == null || element_id === '' ? null : parseEl(element_id);
       const frameId = el?.frameId || 0;
       const d = await injectAt(tab.id, frameId, describeEl, [el ? el.local : null]);
-      const crucial = !!consequential || (k === 'Enter' && !!d && !d.search && (d.multiline || d.submit || d.tag === 'input'));
-      const ok = await approve(ctx, `Press ${key}${d?.label ? ` on “${d.label}”` : ''} on ${host(tab.url)}`, crucial);
+      const crucial = !!consequential || args.dialog === 'accept' || (k === 'Enter' && !!d && !d.search && (d.multiline || d.submit || d.tag === 'input'));
+      const ok = await approve(ctx, `Press ${key}${d?.label ? ` on “${d.label}”` : ''} on ${host(tab.url)}${args.dialog === 'accept' ? ' and answer OK to the page’s dialog' : ''}`, crucial);
       if (!ok) return { content: DECLINED, isError: true };
+      const before = await tabIds();
+      await armPage(tab.id, frameId, dialogPlan(args, crucial));
       const r = await injectAt(tab.id, frameId, pressKeyEl, [el ? el.local : null, k]);
       if (!r?.ok) return { content: r?.error || 'Key press failed.', isError: true };
       const after = await afterPageAction(tab.id, k === 'Enter' ? 1200 : 400);
-      return { content: `Pressed ${key}.\n${after.text}`, url: after.tab.url };
+      const events = await pageEvents(tab.id, frameId, before, ctx);
+      return { content: `Pressed ${key}.${r.value != null ? ` The slider is now at ${r.value}.` : ''}${events}\n${after.text}`, url: after.tab.url };
     },
   },
   {
@@ -1159,13 +1224,25 @@ export const TOOLS = [
               log.push(`${n} ${s.action} “${d.label}”: not approved by the user. Stopped.`);
               break;
             }
+            const acts = s.action === 'click' || s.submit;
+            const before = acts ? await tabIds() : null;
+            if (acts) await armPage(tab.id, el.frameId, dialogPlan({}, approved.has(i) || (ctx.permission === 'full' && crucialStep(s, d))));
             const r = s.action === 'click'
               ? await injectAt(tab.id, el.frameId, clickEl, [el.local])
               : await injectAt(tab.id, el.frameId, typeEl, [el.local, String(s.text ?? ''), !!s.submit, !!s.append]);
             if (!r?.ok) throw new Error(r?.error || 'failed');
+            if (r.newTab) {
+              const t = await openAgentTab(r.newTab, ctx);
+              log.push(`${n} clicked ${d.tag} “${d.label}”: it opens in a new tab, now tab id=${t.id} (${r.newTab}). Stopped here; continue on that tab.`);
+              break;
+            }
             log.push(`${n} ${s.action === 'click' ? 'clicked' : r.chose ? `chose “${r.chose}” in` : 'typed into'} ${d.tag} “${d.label}”${r.covered ? ` (warning: ${r.covered} was on top of it)` : ''}`);
-            await sleep(s.action === 'click' || s.submit ? 700 : 150);
-            if (s.action === 'click' || s.submit) await waitForTab(tab.id, 8000);
+            await sleep(acts ? 700 : 150);
+            if (acts) {
+              await waitForTab(tab.id, 8000);
+              const events = await pageEvents(tab.id, el.frameId, before, ctx);
+              if (events) log.push(events.trim());
+            }
           } else if (s.action === 'key') {
             const k = s.key === 'Space' ? ' ' : String(s.key || '');
             if (!k) throw new Error('needs key');
@@ -1329,20 +1406,25 @@ export const TOOLS = [
         action: { type: 'string', enum: ['left_click', 'double_click', 'triple_click', 'right_click', 'hover'] },
         modifiers: str('Keys held during the click, e.g. "ctrl" or "shift" (optional).'),
         consequential: CONSEQUENTIAL,
+        ...DIALOG,
       },
       ['x', 'y'],
     ),
     label: (a) => `${{ double_click: 'Double-clicking', triple_click: 'Triple-clicking', right_click: 'Right-clicking', hover: 'Hovering' }[a.action] || 'Clicking'} at ${a.x}, ${a.y}`,
-    async run({ tab_id, x, y, action = 'left_click', modifiers, consequential }, ctx) {
+    async run(args, ctx) {
+      const { tab_id, x, y, action = 'left_click', modifiers, consequential } = args;
       const tab = await controlTab(tab_id, ctx);
       const p = await toPage(tab.id, x, y);
       const d = await evalInTab(tab.id, pointInfo, p.x, p.y);
       const what = d ? `${d.tag}${d.label ? ` “${d.label}”` : ''}` : `point ${x}, ${y}`;
+      let crucial = false;
       if (action !== 'hover') {
-        const crucial = !!consequential || (!!d && crucialClick(d));
-        const ok = await approve(ctx, `Click ${what} on ${host(tab.url)}`, crucial);
+        crucial = !!consequential || (!!d && crucialClick(d)) || args.dialog === 'accept';
+        const ok = await approve(ctx, `Click ${what} on ${host(tab.url)}${args.dialog === 'accept' ? ' and answer OK to the page’s dialog' : ''}`, crucial);
         if (!ok) return { content: 'The user did not approve this click. Do not retry it; ask them how to proceed.', isError: true };
       }
+      const before = await tabIds();
+      await armPage(tab.id, 0, dialogPlan(args, crucial));
       const mods = modifiers ? String(modifiers).split('+').reduce((m, k) => m | (MODS[k.trim().toLowerCase()] || 0), 0) : 0;
       await mouse(tab.id, 'mouseMoved', p.x, p.y, { modifiers: mods });
       if (action !== 'hover') {
@@ -1355,7 +1437,8 @@ export const TOOLS = [
         }
       }
       const r = await afterAction(tab, action === 'hover' ? 400 : 900, ctx);
-      return { ...r, detail: d?.label || undefined };
+      const events = await pageEvents(tab.id, 0, before, ctx);
+      return { ...r, content: `${r.content}${events}`, detail: d?.label || undefined };
     },
   },
   {

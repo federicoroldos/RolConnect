@@ -22,7 +22,7 @@ An AI chat on every new tab that is also a browsing agent. It searches the web, 
 ## Features
 
 ### 🧭 An agent that uses your browser
-Ask for something and it does the steps: searches, reads pages, opens tabs, clicks buttons, fills in forms and presses keys. You see every step as it happens. The tabs it opens go into their own purple **Rold** tab group, so they never get mixed up with yours.
+Ask for something and it does the steps: searches, reads pages, opens tabs, clicks buttons, fills in forms, moves sliders and presses keys. It answers a page's pop-up questions (*"Are you sure?"*, a prompt for a name) and follows links that open in a new tab. You see every step as it happens. The tabs it opens go into their own purple **Rold** tab group, so they never get mixed up with yours.
 
 It keeps going until the job is done (up to 100 steps): it plans longer tasks as a checklist you can follow, does several steps at once on a page, splits research between helpers working in parallel, and checks its own work before it answers. Long tasks don't run out of room: old page reads are cleared as it goes, and it remembers what it did in earlier turns of the chat.
 

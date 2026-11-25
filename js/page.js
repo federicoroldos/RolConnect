@@ -108,6 +108,7 @@ export function snapshotPage(opts) {
       let v = el.tagName === 'SELECT' ? el.selectedOptions?.[0]?.text : el.isContentEditable ? el.innerText : el.value;
       v = clean(v, 100);
       if (v) x += ` value="${secret ? '•••' : v}"`;
+      if (el.tagName === 'INPUT' && el.type === 'range') x += ` (${el.min || 0} to ${el.max || 100}, step ${el.step || 1}; set it with type_text)`;
       if (el.tagName === 'SELECT') {
         const opts = [...el.options].map((op) => clean(op.text, 30)).filter(Boolean);
         x += ` options: ${opts.slice(0, 12).join(' | ')}${opts.length > 12 ? ` | …${opts.length - 12} more` : ''}`;
@@ -334,8 +335,58 @@ export function clickEl(id) {
     el.dispatchEvent(new PointerEvent('pointerup', { ...opts, pointerType: 'mouse', isPrimary: true }));
     el.dispatchEvent(new MouseEvent('mouseup', opts));
   } catch {}
+  // A link that opens a new window: a script click has no user gesture, so the browser would block it.
+  const a = el.closest?.('a[href]');
+  const target = (a?.getAttribute('target') || '').toLowerCase();
+  if (a && target && !['_self', '_parent', '_top'].includes(target) && /^https?:/.test(a.href)) return { ok: true, covered, newTab: a.href };
   el.click();
   return { ok: true, covered };
+}
+
+// Runs in the page's own world (MAIN). For a few seconds after one of Rold's actions, alert, confirm
+// and prompt are answered from the plan instead of freezing the tab, and recorded so the agent hears
+// about them; window.open calls the browser blocks (no user gesture) are recorded too. Outside that
+// window the page's dialogs behave normally, so the user's own clicks are untouched.
+export function armDialogs(plan) {
+  let st = window.__roldDlg;
+  if (!st) {
+    const orig = { alert: window.alert, confirm: window.confirm, prompt: window.prompt, open: window.open };
+    st = window.__roldDlg = { until: 0, plan: null, seen: [] };
+    const on = () => Date.now() < st.until;
+    const msg = (m) => String(m ?? '').slice(0, 300);
+    window.alert = function (m) {
+      if (!on()) return orig.alert.apply(window, arguments);
+      st.seen.push({ type: 'alert', message: msg(m) });
+    };
+    window.confirm = function (m) {
+      if (!on()) return orig.confirm.apply(window, arguments);
+      const ok = st.plan?.accept === true;
+      st.seen.push({ type: 'confirm', message: msg(m), answer: ok ? 'OK' : 'Cancel' });
+      return ok;
+    };
+    window.prompt = function (m, def) {
+      if (!on()) return orig.prompt.apply(window, arguments);
+      const v = st.plan?.text != null ? String(st.plan.text) : st.plan?.accept === true ? String(def ?? '') : null;
+      st.seen.push({ type: 'prompt', message: msg(m), answer: v == null ? 'Cancel' : `“${v}”` });
+      return v;
+    };
+    window.open = function (u) {
+      const w = orig.open.apply(window, arguments);
+      if (!w && on() && u) { try { st.seen.push({ type: 'open', url: new URL(u, location.href).href }); } catch {} }
+      return w;
+    };
+  }
+  st.plan = plan || null;
+  st.until = Date.now() + 5000;
+  return true;
+}
+
+export function takeDialogs() {
+  const st = window.__roldDlg;
+  if (!st) return [];
+  const seen = st.seen;
+  st.seen = [];
+  return seen;
 }
 
 export function typeEl(id, text, submit, append) {
@@ -404,6 +455,14 @@ export function pressKeyEl(id, key) {
   const notCancelled = el.dispatchEvent(new KeyboardEvent('keydown', opts));
   if (key === 'Enter' || key === ' ') el.dispatchEvent(new KeyboardEvent('keypress', opts));
   el.dispatchEvent(new KeyboardEvent('keyup', opts));
+  if (notCancelled && el.tagName === 'INPUT' && el.type === 'range' && /^(Arrow|Home|End|Page)/.test(key)) {
+    // Synthetic keys don't move a slider, so do what the browser would.
+    const before = el.value;
+    if (key === 'Home' || key === 'End') Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, key === 'Home' ? el.min || 0 : el.max || 100);
+    else for (let i = 0; i < (/^Page/.test(key) ? 10 : 1); i++) (/Up|Right/.test(key) ? el.stepUp() : el.stepDown());
+    if (el.value !== before) { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }
+    return { ok: true, value: el.value };
+  }
   if (notCancelled) {
     const form = el.form || el.closest?.('form');
     if (key === 'Enter' && form && el.tagName === 'INPUT') form.requestSubmit ? form.requestSubmit() : form.submit();
