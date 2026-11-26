@@ -27,9 +27,12 @@ export async function addToAgentGroup(tabId, ctx) {
   } catch {}
 }
 
-async function openAgentTab(url, ctx, active = false) {
+let lastAgentTabId = null; // the tab the agent opened most recently (see targetTab)
+
+async function openAgentTab(url, ctx, active = false, remember = true) {
   if (active && ctx?.run) ctx.run.lastAgentFocus = Date.now();
   const tab = await chrome.tabs.create({ url, active });
+  if (remember) lastAgentTabId = tab.id;
   await addToAgentGroup(tab.id, ctx);
   return tab;
 }
@@ -136,6 +139,35 @@ function readPage(maxLen, docArg, selector) {
   let text;
   if (live && root.innerText) {
     text = root.innerText;
+    // innerText skips shadow DOM (web components: Reddit, YouTube, many design systems). If the
+    // page has shadow roots, walk them too and keep whichever reading has more.
+    let hosts = 0;
+    const all = root.querySelectorAll('*');
+    for (let i = 0; i < all.length && i < 20000 && !hosts; i++) if (all[i].shadowRoot) hosts++;
+    if (hosts) {
+      const BLK = /^(P|DIV|SECTION|ARTICLE|LI|UL|OL|TR|TABLE|PRE|BLOCKQUOTE|BR|HR|DT|DD|DL|FIGCAPTION|FIGURE|HEADER|FOOTER|NAV|MAIN|ASIDE|FORM|H[1-6])$/;
+      const out = [];
+      let n = 0;
+      const walk = (node) => {
+        const kids = node.tagName === 'SLOT' ? node.assignedNodes({ flatten: true }) : node.childNodes;
+        for (const c of kids) {
+          if (++n > 40000) return;
+          if (c.nodeType === 3) { out.push(c.nodeValue); continue; }
+          if (c.nodeType !== 1 || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG|CANVAS|IFRAME)$/i.test(c.tagName)) continue;
+          if (c.checkVisibility && !c.checkVisibility() && getComputedStyle(c).display !== 'contents') continue;
+          const blk = BLK.test(c.tagName);
+          if (/^H[1-6]$/.test(c.tagName)) out.push('\n\n' + '#'.repeat(+c.tagName[1]) + ' ');
+          else if (c.tagName === 'LI') out.push('\n- ');
+          else if (blk) out.push('\n');
+          else if (/^(TD|TH)$/.test(c.tagName)) out.push('\t');
+          walk(c.shadowRoot || c);
+          if (blk) out.push('\n');
+        }
+      };
+      walk(root);
+      const deep = out.join('');
+      if (deep.replace(/\s+/g, '').length > text.replace(/\s+/g, '').length * 1.1 + 100) text = deep;
+    }
   } else {
     const clone = root.cloneNode(true);
     clone
@@ -205,7 +237,12 @@ function findText(query, selector) {
   let byWords = false;
   if (!hits.length && words.length > 1) { hits = search((t) => words.every((w) => t.includes(w))); byWords = true; }
   const loading = /loading|load more|show more/i.test(text.slice(-200));
-  return { title: document.title, url: location.href, hits: hits.slice(0, 25), total: hits.length, words: byWords && hits.length > 0, chars: text.length, loading };
+  let shadow = false;
+  if (!hits.length) {
+    const all = root.querySelectorAll('*');
+    for (let i = 0; i < all.length && i < 20000 && !shadow; i++) shadow = !!all[i].shadowRoot;
+  }
+  return { title: document.title, url: location.href, hits: hits.slice(0, 25), total: hits.length, words: byWords && hits.length > 0, chars: text.length, loading, shadow };
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +412,13 @@ async function targetTab(tabId) {
     }
   }
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  // From Rold's own pages (the new tab chat, a routine running in the background) "this tab"
+  // means the page the agent just opened, not the chat itself.
+  const base = chrome.runtime?.getURL?.('');
+  const own = !!base && !!active?.url?.startsWith(base);
+  if (own && lastAgentTabId != null) {
+    try { return await chrome.tabs.get(lastAgentTabId); } catch {}
+  }
   if (active) return active;
   const tabs = (await chrome.tabs.query({})).filter((t) => isWebUrl(t.url));
   tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
@@ -393,7 +437,7 @@ async function inject(tabId, func, args = []) {
 }
 
 async function readViaTab(url, ctx) {
-  const tab = await openAgentTab(url, ctx);
+  const tab = await openAgentTab(url, ctx, false, false);
   try {
     await waitForTab(tab.id, 20000);
     if (ctx?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -478,7 +522,7 @@ async function searchBing(query, limit, signal) {
 }
 
 async function searchBingTab(query, limit, ctx) {
-  const tab = await openAgentTab(`https://www.bing.com/search?q=${encodeURIComponent(query)}`, ctx);
+  const tab = await openAgentTab(`https://www.bing.com/search?q=${encodeURIComponent(query)}`, ctx, false, false);
   try {
     await waitForTab(tab.id, 15000);
     await sleep(600);
@@ -909,6 +953,36 @@ export const TOOLS = [
       if (find && isWebUrl(tab.url)) {
         const r = await inject(tab.id, findText, [String(find), selector || '']);
         const head = `Tab id=${tab.id}\nTitle: ${r.title}\nURL: ${r.url}\n\n`;
+        if (!r.hits.length && r.shadow) {
+          // The text may sit inside web components' shadow DOM, which findText can't walk:
+          // search the deep reading line by line, with a line of context on each side.
+          const page = await inject(tab.id, readPage, [600000, null, selector || '']);
+          const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
+          const q = norm(String(find).trim().replace(/^@/, '')).trim();
+          const words = q.split(' ').filter((w) => w.length > 1);
+          const lines = page.text.split('\n').filter((l) => l.trim());
+          const scan = (fits) => {
+            const out = [];
+            let last = -9;
+            lines.forEach((l, i) => {
+              if (!fits(norm(l)) || i - last < 3) return;
+              last = i;
+              out.push(lines.slice(Math.max(0, i - 1), i + 2).join('\n').slice(0, 700));
+            });
+            return out;
+          };
+          let hits = scan((t) => t.includes(q));
+          let byWords = false;
+          if (!hits.length && words.length > 1) { hits = scan((t) => words.every((w) => t.includes(w))); byWords = hits.length > 0; }
+          if (hits.length) {
+            return {
+              content: `${head}${hits.length} passage${hits.length === 1 ? ' mentions' : 's mention'} “${find}”${byWords ? ' (matched by its words, not the exact phrase)' : ''}${hits.length > 25 ? ', first 25 shown' : ''}:\n\n${hits.slice(0, 25).join('\n---\n')}`,
+              sources: [{ title: r.title || host(r.url), url: r.url }],
+              detail: `${hits.length} found`,
+              url: r.url,
+            };
+          }
+        }
         if (!r.hits.length) {
           return { content: `${head}“${find}” does not appear in the page text (${r.chars.toLocaleString()} characters searched${r.loading ? '; the page may still be loading more as you scroll' : ''}). Images, canvases and unloaded parts aren't searched.`, detail: 'No matches' };
         }
@@ -1534,6 +1608,136 @@ export const TOOLS = [
       }
       await mouse(tab.id, 'mouseReleased', b.x, b.y, { button: 'left', buttons: 0, clickCount: 1 });
       return afterAction(tab, 600, ctx);
+    },
+  },
+  {
+    name: 'computer_batch',
+    kind: 'click',
+    browserControl: true,
+    needsComputer: true,
+    description:
+      'Several real mouse and keyboard steps on one tab in a row, with one screenshot at the end instead of one per step. Use it when you already know where everything is: draw a shape and label it (drag, double_click, type, key Escape), click a few spots on a canvas, fill a field by coordinates. Coordinates are in the latest screenshot (they must still be right after the earlier steps). Stops at the first failure. Use single tools when you need to see the result of a step before the next.',
+    parameters: obj(
+      {
+        tab_id: TAB_ID,
+        steps: {
+          type: 'array',
+          description: 'Steps in order (up to 25).',
+          items: obj(
+            {
+              action: { type: 'string', enum: ['click', 'double_click', 'right_click', 'hover', 'drag', 'type', 'key', 'scroll', 'wait'] },
+              x: COORD('X (click, double_click, right_click, hover, scroll; drag start)'),
+              y: COORD('Y (click, double_click, right_click, hover, scroll; drag start)'),
+              to_x: COORD('Drag end X'),
+              to_y: COORD('Drag end Y'),
+              text: str('For type: text typed into whatever is focused.'),
+              key: str('For key: a key or shortcut, e.g. "Enter", "Escape", "ctrl+a", "Delete".'),
+              repeat: int('For key: times to press it, 1-50.'),
+              direction: { type: 'string', enum: ['down', 'up', 'left', 'right'], description: 'For scroll.' },
+              modifiers: str('For clicks and drags: keys held, e.g. "shift" (optional).'),
+              seconds: int('For wait: 1-5.'),
+            },
+            ['action'],
+          ),
+        },
+        consequential: CONSEQUENTIAL,
+        ...DIALOG,
+      },
+      ['steps'],
+    ),
+    label: (a) => `Running ${(a.steps || []).length} mouse and keyboard steps`,
+    async run(args, ctx) {
+      const { tab_id, steps: raw, consequential } = args;
+      const steps = (Array.isArray(raw) ? raw : []).slice(0, 25);
+      if (!steps.length) return { content: 'No steps given.', isError: true };
+      const tab = await controlTab(tab_id, ctx);
+      for (const s of steps) if (s.action === 'key') parseCombo(s.key || ''); // validate keys first
+      if (consequential && !(await approve(ctx, `Run ${steps.length} mouse and keyboard steps on ${host(tab.url)}`, true))) return { content: DECLINED, isError: true };
+      const before = await tabIds();
+      await armPage(tab.id, 0, dialogPlan(args, !!consequential));
+      const mods = (m) => (m ? String(m).split('+').reduce((v, k) => v | (MODS[k.trim().toLowerCase()] || 0), 0) : 0);
+      const log = [];
+      for (let i = 0; i < steps.length; i++) {
+        const s = steps[i];
+        await ctx.gate?.();
+        if (ctx.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        const n = `${i + 1}.`;
+        try {
+          if (['click', 'double_click', 'right_click', 'hover'].includes(s.action)) {
+            const p = await toPage(tab.id, s.x, s.y);
+            const d = await evalInTab(tab.id, pointInfo, p.x, p.y);
+            const what = d ? `${d.tag}${d.label ? ` “${d.label}”` : ''}` : `point ${s.x}, ${s.y}`;
+            if (s.action !== 'hover' && !consequential && d && crucialClick(d) && !(await approve(ctx, `Click ${what} on ${host(tab.url)}`, true))) {
+              log.push(`${n} click on ${what}: not approved by the user. Stopped.`);
+              break;
+            }
+            const m = mods(s.modifiers);
+            await mouse(tab.id, 'mouseMoved', p.x, p.y, { modifiers: m });
+            if (s.action !== 'hover') {
+              const button = s.action === 'right_click' ? 'right' : 'left';
+              const times = s.action === 'double_click' ? 2 : 1;
+              for (let c = 1; c <= times; c++) {
+                await mouse(tab.id, 'mousePressed', p.x, p.y, { button, buttons: button === 'right' ? 2 : 1, clickCount: c, modifiers: m });
+                await mouse(tab.id, 'mouseReleased', p.x, p.y, { button, buttons: 0, clickCount: c, modifiers: m });
+              }
+            }
+            log.push(`${n} ${s.action.replace('_', '-')} at ${s.x}, ${s.y}${d?.label ? ` (${what})` : ''}`);
+            await sleep(s.action === 'hover' ? 250 : 350);
+          } else if (s.action === 'drag') {
+            const a = await toPage(tab.id, s.x, s.y);
+            const b = await toPage(tab.id, s.to_x, s.to_y);
+            const m = mods(s.modifiers);
+            await mouse(tab.id, 'mouseMoved', a.x, a.y, { modifiers: m });
+            await mouse(tab.id, 'mousePressed', a.x, a.y, { button: 'left', buttons: 1, clickCount: 1, modifiers: m });
+            for (let k = 1; k <= 10; k++) {
+              await mouse(tab.id, 'mouseMoved', a.x + ((b.x - a.x) * k) / 10, a.y + ((b.y - a.y) * k) / 10, { button: 'left', buttons: 1, modifiers: m });
+              await sleep(16);
+            }
+            await mouse(tab.id, 'mouseReleased', b.x, b.y, { button: 'left', buttons: 0, clickCount: 1, modifiers: m });
+            log.push(`${n} dragged ${s.x}, ${s.y} → ${s.to_x}, ${s.to_y}`);
+            await sleep(300);
+          } else if (s.action === 'type' || s.action === 'key') {
+            const f = await evalInTab(tab.id, focusInfo);
+            if (f?.secret) throw new Error('the focused field looks like a password, one-time code or payment field; ask the user to fill it in');
+            if (s.action === 'type') {
+              if (!s.text) throw new Error('needs text');
+              await cdp(tab.id, 'Input.insertText', { text: String(s.text) });
+              log.push(`${n} typed “${String(s.text).slice(0, 60)}”${f?.label ? ` in “${f.label}”` : ''}`);
+              await sleep(150);
+            } else {
+              const k = String(s.key).toLowerCase().replace(/\s/g, '');
+              const sends = /(^|\+)(enter|return)$/.test(k) && (k !== 'enter' && k !== 'return' ? true : !!f && !f.search && (f.multiline || f.tag === 'input'));
+              if (sends && !consequential && !(await approve(ctx, `Press ${s.key}${f?.label ? ` in “${f.label}”` : ''} on ${host(tab.url)}`, true))) {
+                log.push(`${n} ${s.key}: not approved by the user. Stopped.`);
+                break;
+              }
+              const times = Math.max(1, Math.min(50, s.repeat || 1));
+              for (let r = 0; r < times; r++) await pressCombo(tab.id, s.key);
+              log.push(`${n} pressed ${s.key}${times > 1 ? ` ×${times}` : ''}`);
+              await sleep(/enter|return/.test(k) ? 800 : 150);
+            }
+          } else if (s.action === 'scroll') {
+            const p = await toPage(tab.id, s.x, s.y);
+            const dir = s.direction || 'down';
+            await mouse(tab.id, 'mouseMoved', p.x, p.y);
+            await mouse(tab.id, 'mouseWheel', p.x, p.y, { deltaX: dir === 'right' ? 500 : dir === 'left' ? -500 : 0, deltaY: dir === 'down' ? 500 : dir === 'up' ? -500 : 0 });
+            log.push(`${n} scrolled ${dir} at ${s.x}, ${s.y}`);
+            await sleep(400);
+          } else if (s.action === 'wait') {
+            const sec = Math.max(1, Math.min(5, s.seconds || 1));
+            await sleep(sec * 1000);
+            log.push(`${n} waited ${sec}s`);
+          } else throw new Error(`unknown action "${s.action}"`);
+        } catch (e) {
+          if (e.name === 'AbortError') throw e;
+          log.push(`${n} ${s.action} failed: ${e.message}. Stopped here; later steps did not run.`);
+          break;
+        }
+      }
+      const r = await afterAction(tab, 500, ctx, `${log.join('\n')}\n\n`);
+      const events = await pageEvents(tab.id, 0, before, ctx);
+      const failed = /failed:|not approved/.test(log[log.length - 1] || '');
+      return { ...r, content: `${r.content}${events}`, isError: failed, detail: `${log.length}/${steps.length} steps` };
     },
   },
   {

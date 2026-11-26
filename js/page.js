@@ -188,11 +188,22 @@ export function snapshotPage(opts) {
     const modal = el.getAttribute('aria-modal') === 'true' || (el.tagName === 'DIALOG' && el.open) || /dialog/.test(role);
     if (area || modal) {
       const name = clean(el.getAttribute('aria-label') || (el.getAttribute('aria-labelledby') && byId(el.getRootNode(), el.getAttribute('aria-labelledby'))?.textContent) || '', 60);
-      if (modal && !dialog) dialog = name || 'untitled';
       const at = items.length;
       items.push({ d, t: `${modal ? 'dialog' : area}${name ? ` "${name}"` : ''}:`, area: true });
       walkKids(el, d + 1, quiet);
-      if (items.length === at + 1) items.pop(); // empty area
+      if (items.length === at + 1) { items.pop(); return; } // empty area
+      // Only a dialog that really blocks the page earns the "A dialog is open" header: role=dialog
+      // alone is also used for toolbars and popovers (Excalidraw marks its whole UI that way).
+      if (modal && !dialog) {
+        let blocking = el.getAttribute('aria-modal') === 'true';
+        try { blocking = blocking || el.matches(':modal'); } catch {}
+        if (!blocking) {
+          const r = el.getBoundingClientRect();
+          const big = r.width * r.height > 0.08 * innerWidth * innerHeight && r.width * r.height < 0.95 * innerWidth * innerHeight;
+          blocking = big && /dialog/.test(role);
+        }
+        if (blocking) dialog = name || 'untitled';
+      }
       return;
     }
     if (o.text && !quiet && TEXT_BLOCK.test(el.tagName) && !el.querySelector('a[href],button,input,textarea,select,[role],[contenteditable],[tabindex],iframe')) {

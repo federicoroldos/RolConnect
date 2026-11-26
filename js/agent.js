@@ -338,11 +338,12 @@ function systemPrompt({ mode, pageInfo, permission, nativeSearch, memories, hist
     mode === 'side' ? "\n- You sit next to the user's current page. When they ask you to do something on it, act on that tab directly." : ''
   }
 - Pages: get_page_elements lists headings, areas and controls with ids and state. Act with click_element, type_text, press_key and scroll_page; each reports what changed, so look again only when the page changed a lot. Do several known steps in one batch_actions call.
-- Prefer direct URLs (search results, filtered lists, compose links) over click paths. run_js pulls data out in bulk or drives pages that ignore normal clicks (consequential=true if it changes anything).${
+- Prefer direct URLs (search results, filtered lists, compose links) over click paths. run_js pulls data out in bulk or drives pages that ignore normal clicks (consequential=true if it changes anything). It is not for finding your way around: look with get_page_elements, read_tab find${computer ? ' or a screenshot' : ''} first, and switch to them after one script comes back empty.
+- Code editors (Monaco, CodeMirror) add indentation and closing brackets as you type: select all and type the code without leading spaces, then read the editor back to check it.${
     computer
       ? `
 - You can see pages. On an unfamiliar, visual or confusing page, start with screenshot labels=true: it shows the layout with every control boxed and numbered by its element id, so you understand what you're looking at and can act by id. Plain get_page_elements is enough for simple pages.
-- click_at, type_keys, scroll_at and drag send real input at coordinates from the latest screenshot and return a new one: check it. Use them for things without an id (canvas apps, maps, editors) and when element tools fail. To type, click_at the field, then type_keys. drag also takes element ids (move a card onto a column). Trust what you see: read colors, icons, canvas drawings and text in images straight from the screenshot instead of decoding pixels or page source with run_js; zoom in with another screenshot if something is too small to tell. Icon-only buttons and color swatches have ids but no text: tell them apart from the labeled screenshot.`
+- click_at, type_keys, scroll_at and drag send real input at coordinates from the latest screenshot and return a new one: check it. Use them for things without an id (canvas apps, maps, editors) and when element tools fail. To type, click_at the field, then type_keys. drag also takes element ids (move a card onto a column). When you already know where several steps go (draw a shape, then double-click it and type its label), do them in one computer_batch call. Trust what you see: read colors, icons, canvas drawings and text in images straight from the screenshot instead of decoding pixels or page source with run_js; zoom in with another screenshot if something is too small to tell. Icon-only buttons and color swatches have ids but no text: tell them apart from the labeled screenshot.`
       : ''
   }
 - Unstuck: close cookie banners and popups first (reject or necessary only). If something fails twice, change approach: another element, a direct URL, the keyboard, run_js${computer ? ', coordinates' : ''}, or another site. Never repeat a failing step unchanged.
@@ -484,7 +485,7 @@ async function execTool(tools, name, args, ctx, ui) {
     r = { content: `Error: ${e.message}`, isError: true, detail: e.message };
   }
   if (typeof r.content !== 'string') r.content = String(r.content ?? '');
-  if (step) ui.updateStep(step, { status: r.isError ? 'error' : 'done', detail: r.detail || (r.isError ? r.content : '') });
+  if (step != null) ui.updateStep(step, { status: r.isError ? 'error' : 'done', detail: r.detail || (r.isError ? r.content : '') });
   if (repeats >= 3) {
     r.content += `\n\n[Note: you have made this exact call ${repeats} times in your last few steps. If it is not getting you closer, try a different approach, or answer with what you have.]`;
   }

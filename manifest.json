@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Rold: AI New Tab & Browsing Agent",
   "short_name": "Rold",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Your new tab and side panel as an AI agent that searches the web, reads pages and uses your tabs. Claude, GPT and more through OpenCode or your ChatGPT plan.",
   "homepage_url": "https://github.com/federicoroldos/Rold",
   "minimum_chrome_version": "116",

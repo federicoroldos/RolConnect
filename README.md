@@ -114,7 +114,7 @@ Models load as soon as you paste a key or sign in. Under the chat box you can sw
 | `batch_actions` | Several clicks, typing and keys on a page in one step |
 | `run_js` | Run a short script on a page to read or change it when clicking is too slow (asks first in Guard) |
 | `screenshot` | See a tab, including background tabs, optionally with every control boxed and numbered; or show it to you as proof |
-| `click_at`, `type_keys`, `scroll_at`, `drag` | Real mouse and keyboard at screen coordinates or onto elements (Computer use) |
+| `click_at`, `type_keys`, `scroll_at`, `drag`, `computer_batch` | Real mouse and keyboard at screen coordinates or onto elements, one step or several at once (Computer use) |
 | `request_approval`, `ask_user` | Ask you before doing something important, or ask a quick question |
 | `update_todos` | Keep a checklist for longer tasks |
 | `delegate` | Hand research to helpers that work in parallel |
